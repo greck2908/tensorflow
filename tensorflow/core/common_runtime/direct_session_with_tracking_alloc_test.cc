@@ -107,26 +107,20 @@ TEST(DirectSessionWithTrackingAllocTest, CostModelTest) {
         EXPECT_EQ(2, shape.dim_size());
         EXPECT_EQ(2, shape.dim(0).size());
         EXPECT_EQ(1, shape.dim(1).size());
+        // if MKL is used, it goes through additional
+        // graph rewrite pass on top of Tensorflow.
+        // In TF, every time a graph pass
+        // happens, "constant" nodes are allocated
+        // and deallocated. Each allocation calls the
+        // (FindChunkPtr of BFCAllocator),
+        // which increments the value of AllocationId.
+        // Thus AllocationId of MKL can differ with TF if
+        // someone changes the relevant codes in BFCAllocator.
+        // Currently they are the same.
         if (node->name() == y->name()) {
-#if defined(INTEL_MKL) && defined(ENABLE_MKL)
-          // if MKL is used, it goes through various additional
-          // graph rewrite pass. In TF, everytime a graph pass
-          // happens, "constant" nodes are allocated
-          // and deallocated. Each allocation calls the
-          // (FindChunkPtr of BFCAllocator),
-          // which increments the value of AllocationId.
-          // Thus AllocationId becomes more than TF if MKL
-          // is used. Now IDs for MKL are 8 more than TF.
-          EXPECT_EQ(21, cm->AllocationId(node, 0));
-#else
-          EXPECT_EQ(13, cm->AllocationId(node, 0));
-#endif  // INTEL_MKL && ENABLE_MKL
+          EXPECT_EQ(3, cm->AllocationId(node, 0));
         } else {
-#if defined(INTEL_MKL) && defined(ENABLE_MKL)
-          EXPECT_EQ(22, cm->AllocationId(node, 0));
-#else
-          EXPECT_EQ(14, cm->AllocationId(node, 0));
-#endif  // INTEL_MKL && ENABLE_MKL
+          EXPECT_EQ(4, cm->AllocationId(node, 0));
         }
       }
       EXPECT_LE(0, cm->MaxExecutionTime(node));
@@ -181,16 +175,10 @@ static void TestHWAccelerator(bool enableHWTrace) {
   test::FillValues<float>(&x_tensor, {1, 1});
   Node* x = test::graph::Constant(&graph, x_tensor);
   x->set_assigned_device_name("/job:localhost/replica:0/task:0/device:GPU:0");
-#ifdef TENSORFLOW_USE_SYCL
-  x->set_assigned_device_name("/job:localhost/replica:0/task:0/device:SYCL:0");
-#endif  // TENSORFLOW_USE_SYCL
 
   // y = A * x
   Node* y = test::graph::Matmul(&graph, a, x, false, false);
   y->set_assigned_device_name("/job:localhost/replica:0/task:0/device:GPU:0");
-#ifdef TENSORFLOW_USE_SYCL
-  y->set_assigned_device_name("/job:localhost/replica:0/task:0/device:SYCL:0");
-#endif  // TENSORFLOW_USE_SYCL
 
   Node* y_neg = test::graph::Unary(&graph, "Neg", y);
   y_neg->set_assigned_device_name("/job:localhost/replica:0/task:0/cpu:0");
@@ -201,9 +189,6 @@ static void TestHWAccelerator(bool enableHWTrace) {
   SessionOptions options;
   (*options.config.mutable_device_count())["CPU"] = 1;
   (*options.config.mutable_device_count())["GPU"] = 1;
-#ifdef TENSORFLOW_USE_SYCL
-  (*options.config.mutable_device_count())["SYCL"] = 1;
-#endif  // TENSORFLOW_USE_SYCL
   options.config.set_allow_soft_placement(true);
   options.config.mutable_graph_options()->set_build_cost_model(1);
   std::unique_ptr<Session> session(NewSession(options));

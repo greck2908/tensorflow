@@ -20,6 +20,7 @@ from __future__ import print_function
 
 import collections
 import functools
+import inspect
 import re
 
 from tensorflow.python.platform import tf_logging as logging
@@ -28,6 +29,7 @@ from tensorflow.python.util import is_in_graph_mode
 from tensorflow.python.util import tf_contextlib
 from tensorflow.python.util import tf_decorator
 from tensorflow.python.util import tf_inspect
+from tensorflow.tools.docs import doc_controls
 
 
 # Allow deprecation warnings to be silenced temporarily with a context manager.
@@ -54,16 +56,39 @@ def _add_deprecated_function_notice_to_docstring(doc, date, instructions):
       '(deprecated)', main_text)
 
 
-def _add_deprecated_arg_notice_to_docstring(doc, date, instructions):
+def _add_deprecated_arg_notice_to_docstring(doc, date, instructions,
+                                            deprecated_names):
   """Adds a deprecation notice to a docstring for deprecated arguments."""
+
+  deprecation_string = ', '.join(sorted(deprecated_names))
+
   return decorator_utils.add_notice_to_docstring(
-      doc, instructions,
-      'DEPRECATED FUNCTION ARGUMENTS',
+      doc, instructions, 'DEPRECATED FUNCTION ARGUMENTS',
       '(deprecated arguments)', [
-          'SOME ARGUMENTS ARE DEPRECATED. '
-          'They will be removed %s.' % (
-              'in a future version' if date is None else ('after %s' % date)),
-          'Instructions for updating:'])
+          'SOME ARGUMENTS ARE DEPRECATED: `(%s)`. '
+          'They will be removed %s.' %
+          (deprecation_string, 'in a future version' if date is None else
+           ('after %s' % date)), 'Instructions for updating:'
+      ])
+
+
+def _add_deprecated_arg_value_notice_to_docstring(doc, date, instructions,
+                                                  deprecated_name_value_dict):
+  """Adds a deprecation notice to a docstring for deprecated arguments."""
+
+  deprecation_string = ', '.join(
+      '%s=%r' % (key, value)
+      for key, value in sorted(deprecated_name_value_dict.items()))
+
+  when = 'in a future version' if date is None else ('after %s' % date)
+
+  return decorator_utils.add_notice_to_docstring(
+      doc, instructions, 'DEPRECATED FUNCTION ARGUMENT VALUES',
+      '(deprecated argument values)', [
+          'SOME ARGUMENT VALUES ARE DEPRECATED: `(%s)`. '
+          'They will be removed %s.' % (deprecation_string, when),
+          'Instructions for updating:'
+      ])
 
 
 def _validate_deprecation_args(date, instructions):
@@ -75,21 +100,12 @@ def _validate_deprecation_args(date, instructions):
 
 def _call_location(outer=False):
   """Returns call location given level up from current call."""
-  frame = tf_inspect.currentframe()
-  if frame:
-    # CPython internals are available, use them for performance.
-    # walk back two frames to get to deprecated function caller.
-    frame = frame.f_back
-    if frame.f_back:
-      frame = frame.f_back
-    if outer and frame.f_back:
-      frame = frame.f_back
-    return '%s:%d' % (frame.f_code.co_filename, frame.f_lineno)
-  else:
-    # Slow fallback path
-    stack = tf_inspect.stack(0)  # 0 avoids generating unused context
-    entry = stack[3 if outer else 2]
-    return '%s:%d' % (entry[1], entry[2])
+  # Two up: <_call_location>, <_call_location's caller>
+  f = inspect.currentframe().f_back.f_back
+  parent = f.f_back
+  if outer and parent is not None:
+    f = parent
+  return '{}:{}'.format(f.f_code.co_filename, f.f_lineno)
 
 
 def _wrap_decorator(wrapped_function):
@@ -131,7 +147,7 @@ def deprecated_alias(deprecated_name, name, func_or_class, warn_once=True):
   DeprecatedNameForClass = deprecated_alias(
     deprecated_name='module2.DeprecatedNameForClass',
     name='module1.NewNameForClass',
-    module1.NewNameForClass)
+    func_or_class=module1.NewNameForClass)
   ```
 
   This function works for classes and functions.
@@ -287,8 +303,23 @@ def deprecated(date, instructions, warn_once=True):
   """
   _validate_deprecation_args(date, instructions)
 
-  def deprecated_wrapper(func):
+  def deprecated_wrapper(func_or_class):
     """Deprecation wrapper."""
+    if isinstance(func_or_class, type):
+      # If a class is deprecated, you actually want to wrap the constructor.
+      cls = func_or_class
+      if cls.__new__ is object.__new__:
+        func = cls.__init__
+        constructor_name = '__init__'
+      else:
+        func = cls.__new__
+        constructor_name = '__new__'
+
+    else:
+      cls = None
+      constructor_name = None
+      func = func_or_class
+
     decorator_utils.validate_callable(func, 'deprecated')
     @functools.wraps(func)
     def new_func(*args, **kwargs):  # pylint: disable=missing-docstring
@@ -304,10 +335,25 @@ def deprecated(date, instructions, warn_once=True):
               'in a future version' if date is None else ('after %s' % date),
               instructions)
       return func(*args, **kwargs)
-    return tf_decorator.make_decorator(
+
+    doc_controls.set_deprecated(new_func)
+    new_func = tf_decorator.make_decorator(
         func, new_func, 'deprecated',
         _add_deprecated_function_notice_to_docstring(func.__doc__, date,
                                                      instructions))
+
+    if cls is None:
+      return new_func
+    else:
+      # Insert the wrapped function as the constructor
+      setattr(cls, constructor_name, new_func)
+
+      # And update the docstring of the class.
+      cls.__doc__ = _add_deprecated_function_notice_to_docstring(
+          cls.__doc__, date, instructions)
+
+      return cls
+
   return deprecated_wrapper
 
 
@@ -403,10 +449,11 @@ def deprecated_args(date, instructions, *deprecated_arg_names_or_tuples,
             pos, spec.has_ok_value, spec.ok_value)
     return deprecated_positional_args
 
+  deprecated_arg_names = _get_arg_names_to_ok_vals()
+
   def deprecated_wrapper(func):
     """Deprecation decorator."""
     decorator_utils.validate_callable(func, 'deprecated_args')
-    deprecated_arg_names = _get_arg_names_to_ok_vals()
 
     arg_spec = tf_inspect.getfullargspec(func)
     deprecated_positions = _get_deprecated_positional_arguments(
@@ -486,9 +533,11 @@ def deprecated_args(date, instructions, *deprecated_arg_names_or_tuples,
                 'in a future version' if date is None else ('after %s' % date),
                 instructions)
       return func(*args, **kwargs)
-    return tf_decorator.make_decorator(func, new_func, 'deprecated',
-                                       _add_deprecated_arg_notice_to_docstring(
-                                           func.__doc__, date, instructions))
+
+    doc = _add_deprecated_arg_notice_to_docstring(
+        func.__doc__, date, instructions, sorted(deprecated_arg_names.keys()))
+    return tf_decorator.make_decorator(func, new_func, 'deprecated', doc)
+
   return deprecated_wrapper
 
 
@@ -551,9 +600,11 @@ def deprecated_arg_values(date, instructions, warn_once=True,
                   func.__module__, arg_name, arg_value, 'in a future version'
                   if date is None else ('after %s' % date), instructions)
       return func(*args, **kwargs)
-    return tf_decorator.make_decorator(func, new_func, 'deprecated',
-                                       _add_deprecated_arg_notice_to_docstring(
-                                           func.__doc__, date, instructions))
+
+    doc = _add_deprecated_arg_value_notice_to_docstring(
+        func.__doc__, date, instructions, deprecated_kwargs)
+    return tf_decorator.make_decorator(func, new_func, 'deprecated', doc)
+
   return deprecated_wrapper
 
 
@@ -591,3 +642,30 @@ def silence():
   _PRINT_DEPRECATION_WARNINGS = False
   yield
   _PRINT_DEPRECATION_WARNINGS = print_deprecation_warnings
+
+
+class HiddenTfApiAttribute(property):
+  """Hides a class attribute from the public API.
+
+  Attributes in public classes can be hidden from the API by having an '_' in
+  front of the name (e.g. ClassName._variables). This doesn't work when
+  attributes or methods are inherited from a parent class. To hide inherited
+  attributes, set their values to be `deprecation.hide_attribute_from_api`.
+  For example, this is used in V2 Estimator to hide the deprecated
+  export_savedmodel method:
+    class EstimatorV2(Estimator):
+       export_savedmodel = deprecation.hide_attribute_from_api('...')
+  """
+
+  def __init__(self, deprecation_message):
+
+    def raise_error(unused_self):
+      raise AttributeError(deprecation_message)
+
+    super(HiddenTfApiAttribute, self).__init__(raise_error)
+
+
+hide_attribute_from_api = HiddenTfApiAttribute  # pylint: disable=invalid-name
+
+# TODO(kathywu): Remove once cl/246395236 is submitted.
+HIDDEN_ATTRIBUTE = HiddenTfApiAttribute('This attribute has been deprecated.')

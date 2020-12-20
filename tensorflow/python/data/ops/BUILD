@@ -1,6 +1,7 @@
-package(default_visibility = ["//tensorflow:internal"])
-
-licenses(["notice"])  # Apache 2.0
+package(
+    default_visibility = ["//tensorflow:internal"],
+    licenses = ["notice"],  # Apache 2.0
+)
 
 exports_files(["LICENSE"])
 
@@ -14,6 +15,7 @@ py_library(
         "//tensorflow/python:control_flow_ops",
         "//tensorflow/python:dataset_ops_gen",
         "//tensorflow/python:dtypes",
+        "//tensorflow/python:experimental_dataset_ops_gen",
         "//tensorflow/python:framework_ops",
         "//tensorflow/python:function",
         "//tensorflow/python:math_ops",
@@ -25,10 +27,17 @@ py_library(
         "//tensorflow/python:tensor_shape",
         "//tensorflow/python:tensor_util",
         "//tensorflow/python:util",
+        "//tensorflow/python/data/experimental/ops:distribute_options",
+        "//tensorflow/python/data/experimental/ops:optimization_options",
+        "//tensorflow/python/data/experimental/ops:stats_options",
+        "//tensorflow/python/data/experimental/ops:threading_options",
         "//tensorflow/python/data/util:nest",
+        "//tensorflow/python/data/util:options",
         "//tensorflow/python/data/util:random_seed",
         "//tensorflow/python/data/util:sparse",
         "//tensorflow/python/data/util:structure",
+        "//tensorflow/python/data/util:traverse",
+        "//tensorflow/python/ops/ragged",
         "//third_party/py/numpy",
     ],
 )
@@ -42,10 +51,14 @@ py_library(
         "//tensorflow/python:array_ops",
         "//tensorflow/python:dataset_ops_gen",
         "//tensorflow/python:dtypes",
+        "//tensorflow/python:experimental_dataset_ops_gen",
         "//tensorflow/python:framework_ops",
         "//tensorflow/python:tensor_shape",
-        "//tensorflow/python/compat",
+        "//tensorflow/python:tensor_spec",
+        "//tensorflow/python:tf2",
+        "//tensorflow/python:util",
         "//tensorflow/python/data/util:convert",
+        "//tensorflow/python/util:tf_export",
     ],
 )
 
@@ -66,7 +79,7 @@ py_library(
         "//tensorflow/python/data/util:sparse",
         "//tensorflow/python/data/util:structure",
         "//tensorflow/python/eager:context",
-        "//tensorflow/python/training/checkpointable:base",
+        "//tensorflow/python/training/tracking:base",
     ],
 )
 
@@ -80,6 +93,7 @@ py_library(
         "//tensorflow/python:framework_ops",
         "//tensorflow/python:resource_variable_ops",
         "//tensorflow/python:tensor_shape",
+        "//tensorflow/python:util",
         "//tensorflow/python/data/util:structure",
     ],
 )
@@ -97,7 +111,10 @@ py_library(
         "//tensorflow/python:dtypes",
         "//tensorflow/python:framework_ops",
         "//tensorflow/python:functional_ops",
+        "//tensorflow/python:tensor_spec",
         "//tensorflow/python/data/util:nest",
         "//tensorflow/python/data/util:sparse",
+        "//tensorflow/python/eager:context",
+        "//tensorflow/python/eager:function",
     ],
 )
