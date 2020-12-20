@@ -13,7 +13,11 @@
 # limitations under the License.
 # ==============================================================================
 
-"""Tensor Handle Operations."""
+"""Tensor Handle Operations.
+
+See the [Session Ops](https://tensorflow.org/api_guides/python/session_ops)
+guide.
+"""
 
 # pylint: disable=g-bad-name
 from __future__ import absolute_import
@@ -23,7 +27,7 @@ from __future__ import print_function
 import numpy as np
 
 from tensorflow.core.framework import resource_handle_pb2
-from tensorflow.python.client import pywrap_tf_session
+from tensorflow.python import pywrap_tensorflow_internal
 from tensorflow.python.framework import device as pydev
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
@@ -71,7 +75,8 @@ class TensorHandle(object):
     if not self._resource_handle:
       self._resource_handle = resource_handle_pb2.ResourceHandleProto()
       self._resource_handle.device = self._handle.split(";")[-1]
-      self._resource_handle.container = (pywrap_tf_session.TENSOR_HANDLE_KEY)
+      self._resource_handle.container = (
+          pywrap_tensorflow_internal.TENSOR_HANDLE_KEY)
       self._resource_handle.name = self._handle
     return self._resource_handle
 
@@ -161,10 +166,10 @@ def get_session_handle(data, name=None):
 
   ```python
   c = tf.multiply(a, b)
-  h = tf.compat.v1.get_session_handle(c)
+  h = tf.get_session_handle(c)
   h = sess.run(h)
 
-  p, a = tf.compat.v1.get_session_tensor(h.handle, tf.float32)
+  p, a = tf.get_session_tensor(h.handle, tf.float32)
   b = tf.multiply(a, 10)
   c = sess.run(b, feed_dict={p: h.handle})
   ```
@@ -202,10 +207,10 @@ def get_session_tensor(handle, dtype, name=None):
 
   ```python
   c = tf.multiply(a, b)
-  h = tf.compat.v1.get_session_handle(c)
+  h = tf.get_session_handle(c)
   h = sess.run(h)
 
-  p, a = tf.compat.v1.get_session_tensor(h.handle, tf.float32)
+  p, a = tf.get_session_tensor(h.handle, tf.float32)
   b = tf.multiply(a, 10)
   c = sess.run(b, feed_dict={p: h.handle})
   ```

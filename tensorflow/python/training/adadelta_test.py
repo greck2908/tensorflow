@@ -86,19 +86,19 @@ class AdadeltaOptimizerTest(test.TestCase):
             self.assertEqual(["accum", "accum_update"],
                              adadelta_opt.get_slot_names())
             slot[0] = adadelta_opt.get_slot(var0, "accum")
-            self.assertEqual(slot[0].get_shape(), var0.get_shape())
+            self.assertEquals(slot[0].get_shape(), var0.get_shape())
             self.assertFalse(slot[0] in variables.trainable_variables())
 
             slot_update[0] = adadelta_opt.get_slot(var0, "accum_update")
-            self.assertEqual(slot_update[0].get_shape(), var0.get_shape())
+            self.assertEquals(slot_update[0].get_shape(), var0.get_shape())
             self.assertFalse(slot_update[0] in variables.trainable_variables())
 
             slot[1] = adadelta_opt.get_slot(var1, "accum")
-            self.assertEqual(slot[1].get_shape(), var1.get_shape())
+            self.assertEquals(slot[1].get_shape(), var1.get_shape())
             self.assertFalse(slot[1] in variables.trainable_variables())
 
             slot_update[1] = adadelta_opt.get_slot(var1, "accum_update")
-            self.assertEqual(slot_update[1].get_shape(), var1.get_shape())
+            self.assertEquals(slot_update[1].get_shape(), var1.get_shape())
             self.assertFalse(slot_update[1] in variables.trainable_variables())
 
           # Fetch params to validate initial values
@@ -158,7 +158,7 @@ class AdadeltaOptimizerTest(test.TestCase):
     with self.cached_session():
       self.doTestBasic(use_resource=False)
 
-  @test_util.run_in_graph_and_eager_modes
+  @test_util.run_in_graph_and_eager_modes(reset_test=True)
   def testResourceBasic(self):
     self.doTestBasic(use_resource=True)
 
@@ -166,7 +166,6 @@ class AdadeltaOptimizerTest(test.TestCase):
     with context.eager_mode():
       self.doTestBasic(use_resource=True, use_callable_params=True)
 
-  @test_util.run_deprecated_v1
   def testMinimizeSparseResourceVariable(self):
     for dtype in [dtypes.half, dtypes.float32, dtypes.float64]:
       with self.cached_session():
@@ -176,13 +175,14 @@ class AdadeltaOptimizerTest(test.TestCase):
         loss = pred * pred
         sgd_op = adadelta.AdadeltaOptimizer(
             1.0, 1.0, 1.0).minimize(loss)
-        self.evaluate(variables.global_variables_initializer())
+        variables.global_variables_initializer().run()
         # Fetch params to validate initial values
-        self.assertAllCloseAccordingToType([[1.0, 2.0]], self.evaluate(var0))
+        self.assertAllCloseAccordingToType([[1.0, 2.0]], var0.eval())
         # Run 1 step of sgd
         sgd_op.run()
         # Validate updated params
-        self.assertAllCloseAccordingToType([[-111, -138]], self.evaluate(var0))
+        self.assertAllCloseAccordingToType(
+            [[-111, -138]], var0.eval())
 
 
 if __name__ == "__main__":

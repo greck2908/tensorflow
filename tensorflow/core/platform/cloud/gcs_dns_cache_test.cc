@@ -14,8 +14,7 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/core/platform/cloud/gcs_dns_cache.h"
-
-#include "tensorflow/core/platform/str_util.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/test.h"
 
 namespace tensorflow {
@@ -69,7 +68,7 @@ class GcsDnsCacheTest : public ::testing::Test {
  protected:
   void ResolveNameTest() {
     auto response = GcsDnsCache::ResolveName("www.googleapis.com");
-    EXPECT_LT(1, response.size()) << absl::StrJoin(response, ", ");
+    EXPECT_LT(1, response.size()) << str_util::Join(response, ", ");
   }
 
   void AnnotateRequestTest() {

@@ -20,7 +20,6 @@ limitations under the License.
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/core/framework/device_base.h"
-#include "tensorflow/core/framework/register_types.h"
 
 namespace tensorflow {
 
@@ -47,8 +46,7 @@ void ConcatCPU(
     const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>&
         inputs,
     typename TTypes<T, 2>::Matrix* output);
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+#if GOOGLE_CUDA
 template <typename T>
 void ConcatGPU(
     OpKernelContext* c,
@@ -56,20 +54,16 @@ void ConcatGPU(
         inputs_flat,
     Tensor* output, typename TTypes<T, 2>::Tensor* output_flat);
 
-// Explicit instantiations in concat_lib_gpu.cc.
-#define REGISTER(T)                                                           \
-  extern template void ConcatGPU<T>(                                          \
-      OpKernelContext * c,                                                    \
-      const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>& \
-          inputs_flat,                                                        \
-      Tensor* output, typename TTypes<T, 2>::Tensor* output_flat);
+#endif  // GOOGLE_CUDA
 
-TF_CALL_INTEGRAL_TYPES(REGISTER);  // int32 Needed for TensorLists.
-TF_CALL_bfloat16(REGISTER);
-TF_CALL_GPU_ALL_TYPES(REGISTER);
-#undef REGISTER
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
+#ifdef TENSORFLOW_USE_SYCL
+template <typename T>
+void ConcatSYCL(
+    const Eigen::SyclDevice& d,
+    const std::vector<std::unique_ptr<typename TTypes<T, 2>::ConstMatrix>>&
+        inputs,
+    typename TTypes<T, 2>::Matrix* output);
+#endif  // TENSORFLOW_USE_SYCL
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_KERNELS_CONCAT_LIB_H_

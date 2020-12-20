@@ -16,47 +16,28 @@ limitations under the License.
 #ifndef TENSORFLOW_CORE_KERNELS_CWISE_OPS_H_
 #define TENSORFLOW_CORE_KERNELS_CWISE_OPS_H_
 
-#define _USE_MATH_DEFINES
 #include <cmath>
 #include <functional>
 #include <type_traits>
 
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/core/framework/bounds_check.h"
+
 #include "tensorflow/core/framework/numeric_types.h"
 #include "tensorflow/core/framework/tensor_types.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 
 namespace Eigen {
 namespace internal {
 
-#if GOOGLE_CUDA
-template <>
-struct scalar_arg_op<std::complex<float>> {
-  EIGEN_EMPTY_STRUCT_CTOR(scalar_arg_op)
-  typedef typename Eigen::NumTraits<std::complex<float>>::Real result_type;
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE float operator()(
-      const std::complex<float>& a) const {
-    return ::atan2f(a.imag(), a.real());
-  }
-};
-
-template <>
-struct scalar_arg_op<std::complex<double>> {
-  EIGEN_EMPTY_STRUCT_CTOR(scalar_arg_op)
-  typedef typename Eigen::NumTraits<std::complex<double>>::Real result_type;
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE double operator()(
-      const std::complex<double>& a) const {
-    return ::atan2(a.imag(), a.real());
-  }
-};
-#endif
-
-#if EIGEN_HAS_CXX11_MATH == 0
 template <typename T>
 struct scalar_asinh_op {
   EIGEN_EMPTY_STRUCT_CTOR(scalar_asinh_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a) const {
+#if EIGEN_HAS_CXX11_MATH
+    return numext::asinh(a);
+#else
     return std::asinh(a);
+#endif  // EIGEN_HAS_CXX11_MATH
   }
 };
 template <typename T>
@@ -67,8 +48,12 @@ struct functor_traits<scalar_asinh_op<T>> {
 template <typename T>
 struct scalar_acosh_op {
   EIGEN_EMPTY_STRUCT_CTOR(scalar_acosh_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a) const {
+#if EIGEN_HAS_CXX11_MATH
+    return numext::acosh(a);
+#else
     return std::acosh(a);
+#endif  // EIGEN_HAS_CXX11_MATH
   }
 };
 template <typename T>
@@ -79,15 +64,36 @@ struct functor_traits<scalar_acosh_op<T>> {
 template <typename T>
 struct scalar_atanh_op {
   EIGEN_EMPTY_STRUCT_CTOR(scalar_atanh_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a) const {
+#if EIGEN_HAS_CXX11_MATH
+    return numext::atanh(a);
+#else
     return std::atanh(a);
+#endif  // EIGEN_HAS_CXX11_MATH
   }
 };
 template <typename T>
 struct functor_traits<scalar_atanh_op<T>> {
   enum { Cost = 5 * NumTraits<T>::MulCost, PacketAccess = false };
 };
-#endif
+
+// TODO(rmlarsen): This is a workaround for upstream change
+// https://bitbucket.org/eigen/eigen/commits/f339468d04d0f87caeb6cab9aef568627e9f6ea9
+// that renamed scalar_binary_pow_op to scalar_pow_op and deleted the unary
+// version of the latter. Remove once we upgrade to Eigen 3.3.
+template <typename Scalar, typename Exponent>
+struct scalar_binary_pow_op_google {
+  EIGEN_EMPTY_STRUCT_CTOR(scalar_binary_pow_op_google)
+  EIGEN_DEVICE_FUNC inline Scalar operator()(const Scalar& a,
+                                             const Exponent& b) const {
+    return numext::pow(a, b);
+  }
+};
+
+template <typename Scalar, typename Exponent>
+struct functor_traits<scalar_binary_pow_op_google<Scalar, Exponent>> {
+  enum { Cost = 5 * NumTraits<Scalar>::MulCost, PacketAccess = false };
+};
 
 template <typename Scalar, typename Exponent>
 struct safe_scalar_binary_pow_op {
@@ -127,8 +133,8 @@ struct safe_div_or_mod_op {
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE safe_div_or_mod_op(bool* error)
       : error(error) {}
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a,
-                                                     const T& b) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a,
+                                                           const T& b) const {
     const T safe_b = tensorflow::internal::SubtleMustCopy(b);
     if (TF_PREDICT_TRUE(safe_b != 0)) {
       return DivOrMod()(a, safe_b);
@@ -147,49 +153,24 @@ struct functor_traits<safe_div_or_mod_op<T, DivOrMod>> {
   };
 };
 
-template <typename T, typename Binary>
-struct no_nan_op {
-  EIGEN_EMPTY_STRUCT_CTOR(no_nan_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a,
-                                                     const T& b) const {
-    if (b != T(0)) {
-      return Binary()(a, b);
+template <typename T>
+struct div_no_nan_op {
+  EIGEN_EMPTY_STRUCT_CTOR(div_no_nan_op)
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a,
+                                                           const T& b) const {
+    if (b != 0) {
+      return scalar_quotient_op<T>()(a, b);
     } else {
-      return T(0);
+      return 0;
     }
   }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
-                                                        const Packet& b) const {
-    const Packet mask = pcmp_eq(b, pzero(b));
-    const Packet quotient = Binary().packetOp(a, b);
-    return pandnot(quotient, mask);
-  }
-};
-
-template <typename T>
-struct div_no_nan_op : public no_nan_op<T, scalar_quotient_op<T>> {
-  EIGEN_EMPTY_STRUCT_CTOR(div_no_nan_op)
 };
 
 template <typename T>
 struct functor_traits<div_no_nan_op<T>> {
   enum {
     Cost = functor_traits<scalar_quotient_op<T>>::Cost + NumTraits<T>::AddCost,
-    PacketAccess = true,
-  };
-};
-
-template <typename T>
-struct mul_no_nan_op : public no_nan_op<T, scalar_product_op<T>> {
-  EIGEN_EMPTY_STRUCT_CTOR(mul_no_nan_op)
-};
-
-template <typename T>
-struct functor_traits<mul_no_nan_op<T>> {
-  enum {
-    Cost = functor_traits<scalar_product_op<T>>::Cost + NumTraits<T>::AddCost,
-    PacketAccess = true,
+    PacketAccess = false,
   };
 };
 
@@ -201,102 +182,60 @@ struct functor_traits<mul_no_nan_op<T>> {
 // constructor. Similarly, scalar_right<> is a unary functor g_y(x) =
 // f(x, y).
 
-template <typename Tout, typename Tin, typename Binary,
-          bool is_scalar_in_host_memory = false>
+template <typename Tout, typename Tin, typename Binary>
 struct scalar_left : private Binary {
-  using result_type = Tout;
-  using TinPacket = typename Eigen::internal::packet_traits<Tin>::type;
-
+  typedef Tout result_type;
   const Tin* left;
-  TinPacket left_packet;  // initialized iff is_scalar_in_host_memory == true
 
   EIGEN_DEVICE_FUNC inline scalar_left(const scalar_left& other) = default;
 
   template <typename... Args>
   EIGEN_DEVICE_FUNC inline explicit scalar_left(const Tin* c, Args... args)
-      : Binary(args...), left(c) {
-    if (is_scalar_in_host_memory) {
-      left_packet = Eigen::internal::pset1<TinPacket>(*left);
-    }
-  }
+      : Binary(args...), left(c) {}
 
   EIGEN_DEVICE_FUNC inline Tout operator()(const Tin& right) const {
     return Binary::operator()(*left, right);
   }
 
-  template <typename Packet,
-            typename std::enable_if<!is_scalar_in_host_memory ||
-                                        !std::is_same<TinPacket, Packet>::value,
-                                    int>::type = 0>
+  template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& right_packet) const {
     const Packet left_packet = Eigen::internal::pset1<Packet>(*left);
     return Binary::packetOp(left_packet, right_packet);
   }
-
-  template <typename Packet,
-            typename std::enable_if<is_scalar_in_host_memory &&
-                                        std::is_same<TinPacket, Packet>::value,
-                                    int>::type = 0>
-  EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& right_packet) const {
-    return Binary::packetOp(left_packet, right_packet);
-  }
 };
 
-template <typename Tout, typename Tin, typename Binary,
-          bool is_scalar_in_host_memory>
-struct functor_traits<
-    scalar_left<Tout, Tin, Binary, is_scalar_in_host_memory>> {
+template <typename Tout, typename Tin, typename Binary>
+struct functor_traits<scalar_left<Tout, Tin, Binary>> {
   enum {
     Cost = functor_traits<Binary>::Cost,
     PacketAccess = functor_traits<Binary>::PacketAccess,
   };
 };
 
-template <typename Tout, typename Tin, typename Binary,
-          bool is_scalar_in_host_memory = false>
+template <typename Tout, typename Tin, typename Binary>
 struct scalar_right : private Binary {
-  using result_type = Tout;
-  using TinPacket = typename Eigen::internal::packet_traits<Tin>::type;
-
+  typedef Tout result_type;
   const Tin* right;
-  TinPacket right_packet;  // initialized iff is_scalar_in_host_memory == true
 
   EIGEN_DEVICE_FUNC inline scalar_right(const scalar_right& other) = default;
 
   template <typename... Args>
   EIGEN_DEVICE_FUNC inline explicit scalar_right(const Tin* c, Args... args)
-      : Binary(args...), right(c) {
-    if (is_scalar_in_host_memory) {
-      right_packet = Eigen::internal::pset1<TinPacket>(*right);
-    }
-  }
+      : Binary(args...), right(c) {}
 
   EIGEN_DEVICE_FUNC inline Tout operator()(const Tin& left) const {
     return Binary::operator()(left, *right);
   }
 
-  template <typename Packet,
-            typename std::enable_if<!is_scalar_in_host_memory ||
-                                        !std::is_same<TinPacket, Packet>::value,
-                                    int>::type = 0>
+  template <typename Packet>
   EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& left_packet) const {
     const Packet right_packet = Eigen::internal::pset1<Packet>(*right);
     return Binary::packetOp(left_packet, right_packet);
   }
-
-  template <typename Packet,
-            typename std::enable_if<is_scalar_in_host_memory &&
-                                        std::is_same<TinPacket, Packet>::value,
-                                    int>::type = 0>
-  EIGEN_DEVICE_FUNC inline Packet packetOp(const Packet& left_packet) const {
-    return Binary::packetOp(left_packet, right_packet);
-  }
 };
 
-template <typename Tout, typename Tin, typename Binary,
-          bool is_scalar_in_host_memory>
-struct functor_traits<
-    scalar_right<Tout, Tin, Binary, is_scalar_in_host_memory>> {
+template <typename Tout, typename Tin, typename Binary>
+struct functor_traits<scalar_right<Tout, Tin, Binary>> {
   enum {
     Cost = functor_traits<Binary>::Cost,
     PacketAccess = functor_traits<Binary>::PacketAccess,
@@ -357,156 +296,117 @@ struct less_equal : std::binary_function<T, T, bool> {
   }
 };
 
-// Functor that enables squared difference functor.
-template <typename Scalar>
-struct scalar_squared_difference_op {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
+// Functor that enables composition of multiple Eigen functors.
+template <typename Scalar, typename UnaryFunctor, typename BinaryFunctor>
+struct scalar_compose_op {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
   operator()(const Scalar& a, const Scalar& b) const {
-    const Scalar v = scalar_difference_op<Scalar>()(a, b);
-    return scalar_product_op<Scalar>()(v, scalar_conjugate_op<Scalar>()(v));
+    return UnaryFunctor()(BinaryFunctor()(a, b));
   }
   template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
-                                                        const Packet& b) const {
-    const Packet v = scalar_difference_op<Scalar>().packetOp(a, b);
-    return scalar_product_op<Scalar>().packetOp(
-        v, scalar_conjugate_op<Scalar>().packetOp(v));
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Packet
+  packetOp(const Packet& a, const Packet& b) const {
+    return UnaryFunctor().packetOp(BinaryFunctor().packetOp(a, b));
   }
 };
 
-template <typename Scalar>
-struct functor_traits<scalar_squared_difference_op<Scalar>> {
+template <typename Scalar, typename UnaryFunctor, typename BinaryFunctor>
+struct functor_traits<scalar_compose_op<Scalar, UnaryFunctor, BinaryFunctor>> {
   enum {
-    Cost = functor_traits<scalar_difference_op<Scalar>>::Cost +
-           functor_traits<scalar_conjugate_op<Scalar>>::Cost +
-           functor_traits<scalar_product_op<Scalar>>::Cost,
-    PacketAccess = functor_traits<scalar_difference_op<Scalar>>::PacketAccess &&
-                   functor_traits<scalar_conjugate_op<Scalar>>::PacketAccess &&
-                   functor_traits<scalar_product_op<Scalar>>::PacketAccess
+    Cost = functor_traits<UnaryFunctor>::Cost +
+           functor_traits<BinaryFunctor>::Cost,
+    PacketAccess = functor_traits<UnaryFunctor>::PacketAccess &&
+                   functor_traits<BinaryFunctor>::PacketAccess
   };
 };
 
 // TODO(b/32239616): This kernel should be moved into Eigen and vectorized.
 template <typename T, typename Enable = void>
 struct google_floor_div {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     if ((x < T(0)) != (y < T(0))) {
-// HIP does not have the device version of the abs routine defined
-// for all datatypes that T can resolve to
-#if defined(__HIP_DEVICE_COMPILE__)
-      T abs_x = (x < T(0)) ? -x : x;
-      T abs_y = (y < T(0)) ? -y : y;
-#else
       T abs_x = std::abs(x);
       T abs_y = std::abs(y);
-#endif
       return -(abs_x + abs_y - 1) / abs_y;
     } else {
       return x / y;
     }
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    Packet zeros = pzero(x);
-    Packet x_mask = pcmp_lt(x, zeros);
-    Packet y_mask = pcmp_lt(y, zeros);
-    Packet x_div_y = pdiv(x, y);
-    Packet abs_x = pabs(x);
-    Packet abs_y = pabs(y);
-    Packet ones = pones(x);
-    Packet ratio_rounded = pdiv(pnegate(psub(padd(abs_x, abs_y), ones)), abs_y);
-    return pselect(pxor(x_mask, y_mask), ratio_rounded, x_div_y);
   }
 };
 
 template <typename T>
 struct google_floor_div<
     T, typename std::enable_if<std::is_unsigned<T>::value>::type> {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     return x / y;
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    return pdiv(x, y);
   }
 };
 
 template <typename Scalar>
 struct functor_traits<google_floor_div<Scalar>> {
   enum {
-    Cost = 2 * Eigen::internal::scalar_div_cost<
-                   Scalar, packet_traits<Scalar>::HasDiv>::value +
-           NumTraits<Scalar>::AddCost,
-    PacketAccess = packet_traits<Scalar>::HasDiv
+    Cost = 2 * Eigen::internal::scalar_div_cost<Scalar, false>::value +
+           2 * NumTraits<Scalar>::AddCost,
+    PacketAccess = false
   };
 };
 
+// TODO(b/32239616): This kernel should be moved into Eigen and vectorized.
 template <typename T, typename Enable = void>
 struct google_floor_div_real {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     return Eigen::numext::floor(x / y);
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    return pfloor(pdiv(x, y));
   }
 };
 
 template <typename Scalar>
 struct functor_traits<google_floor_div_real<Scalar>> {
   enum {
-    Cost = 2 * Eigen::internal::scalar_div_cost<
-                   Scalar, packet_traits<Scalar>::HasDiv>::value +
+    Cost = 2 * Eigen::internal::scalar_div_cost<Scalar, false>::value +
            2 * NumTraits<Scalar>::AddCost,
-    PacketAccess =
-        packet_traits<Scalar>::HasDiv && packet_traits<Scalar>::HasFloor
+    PacketAccess = false
   };
 };
 
-// TODO(rmlarsen): Add vectorized mod & fmod in Eigen and use it here.
+// TODO(b//32239616): This kernel should be moved into Eigen and vectorized.
 template <typename T>
 struct google_floor_fmod {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     // EIGEN_STATIC_ASSERT(NUMERIC_TYPE_MUST_BE_REAL);
-    T trunc_mod = scalar_fmod_op<T>()(x, y);
-    return trunc_mod != T(0) && (y < T(0) != trunc_mod < T(0)) ? trunc_mod + y
-                                                               : trunc_mod;
+    T trunc_mod = std::fmod(x, y);
+    return (x < T(0)) == (y < T(0)) ? trunc_mod : std::fmod(trunc_mod + y, y);
   }
 };
 
 template <typename Scalar>
 struct functor_traits<google_floor_fmod<Scalar>> {
   enum {
-    Cost = functor_traits<Eigen::internal::scalar_fmod_op<Scalar>>::Cost +
-           NumTraits<Scalar>::AddCost,
+    Cost = 2 * Eigen::internal::scalar_div_cost<Scalar, false>::value +
+           2 * NumTraits<Scalar>::AddCost,
     PacketAccess = false
   };
 };
 
-// TODO(rmlarsen): Add vectorized mod & fmod in Eigen and use it here.
+// TODO(b/32239616): This kernel should be moved into Eigen and vectorized.
 template <typename T>
 struct google_floor_mod {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     // EIGEN_STATIC_ASSERT(!NUMERIC_TYPE_MUST_BE_REAL);
-    T trunc_mod = Eigen::internal::scalar_mod2_op<T>()(x, y);
-    return trunc_mod != T(0) && (y < T(0) != trunc_mod < T(0)) ? trunc_mod + y
-                                                               : trunc_mod;
+    T trunc_mod = x % y;
+    return (x < T(0)) == (y < T(0)) ? trunc_mod : (trunc_mod + y) % y;
   }
 };
 
 template <typename Scalar>
 struct functor_traits<google_floor_mod<Scalar>> {
   enum {
-    Cost = functor_traits<Eigen::internal::scalar_mod2_op<Scalar>>::Cost +
-           NumTraits<Scalar>::AddCost,
+    Cost = 2 * Eigen::internal::scalar_div_cost<Scalar, false>::value +
+           2 * NumTraits<Scalar>::AddCost,
     PacketAccess = false
   };
 };
@@ -521,109 +421,32 @@ struct functor_traits<google_floor_mod<Scalar>> {
 #define ENABLE_FLOAT_EQUALITY_WARNING
 #endif
 
-template <typename Scalar, bool IsInteger = Eigen::NumTraits<Scalar>::IsInteger,
-          bool HasRint = packet_traits<Scalar>::HasRint>
-struct scalar_round_half_to_even_op {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
+template <typename Scalar>
+struct scalar_round_op_google {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
   operator()(const Scalar& x) const {
     EIGEN_STATIC_ASSERT((!NumTraits<Scalar>::IsComplex),
                         NUMERIC_TYPE_MUST_BE_REAL)
 
-    const Scalar round_val = Eigen::numext::floor(x + Scalar(0.5));
-    const Scalar fraction = round_val - x;
-    if (TF_PREDICT_FALSE(fraction == Scalar(.5))) {
-      return Scalar(2) * Eigen::numext::floor(Scalar(.5) * x + Scalar(0.5));
-    } else {
-      return round_val;
+    Scalar round_val = Eigen::numext::floor(x);
+    const Scalar fraction = x - round_val;
+    if (fraction > Scalar(.5)) {
+      round_val += Scalar(1.0);
+    } else if (fraction == Scalar(.5)) {
+      const Scalar nearest_even_int =
+          round_val - Scalar(2) * Eigen::numext::floor(Scalar(.5) * x);
+      bool is_odd = (nearest_even_int == Scalar(1));
+      if (is_odd) {
+        round_val += Scalar(1);
+      }
     }
-  }
-
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    Packet half = pset1<Packet>(Scalar(0.5));
-    Packet round_val = pfloor(padd(x, half));
-    Packet fraction = psub(round_val, x);
-    Packet half_mask = pcmp_eq(fraction, half);
-    bool any_halves = predux_any(half_mask);
-    if (TF_PREDICT_FALSE(any_halves)) {
-      Packet two = pset1<Packet>(Scalar(2));
-      Packet nearest_even = pmul(two, pfloor(pmadd(half, x, half)));
-      return pselect(half_mask, nearest_even, round_val);
-    } else {
-      return round_val;
-    }
+    return round_val;
   }
 };
 
 template <typename Scalar>
-struct scalar_round_half_to_even_op<Scalar, true, false> {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
-  operator()(const Scalar& x) const {
-    return x;
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    return x;
-  }
-};
-
-template <typename Scalar>
-struct scalar_round_half_to_even_op<Scalar, false, true> {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
-  operator()(const Scalar& x) const {
-    return Eigen::numext::rint(x);
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    return print(x);
-  }
-};
-
-template <typename Scalar>
-struct functor_traits<scalar_round_half_to_even_op<Scalar>> {
-  enum {
-    Cost = Eigen::NumTraits<Scalar>::IsInteger ? 0
-                                               : 4 * NumTraits<Scalar>::AddCost,
-    PacketAccess = packet_traits<Scalar>::HasFloor &&
-                   packet_traits<Scalar>::HasAdd &&
-                   packet_traits<Scalar>::HasMul,
-  };
-};
-
-template <typename Scalar, bool IsInteger = Eigen::NumTraits<Scalar>::IsInteger>
-struct scalar_round_up_op {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
-  operator()(const Scalar& x) const {
-    EIGEN_STATIC_ASSERT((!NumTraits<Scalar>::IsComplex),
-                        NUMERIC_TYPE_MUST_BE_REAL)
-    return Eigen::numext::floor(x + Scalar(0.5));
-  }
-
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    return pfloor(padd(x, pset1<Packet>(0.5)));
-  }
-};
-
-template <typename Scalar>
-struct scalar_round_up_op<Scalar, true> {
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
-  operator()(const Scalar& x) const {
-    return x;
-  }
-
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    return x;
-  }
-};
-
-template <typename Scalar, bool IsInteger>
-struct functor_traits<scalar_round_up_op<Scalar, IsInteger>> {
-  enum {
-    Cost = IsInteger ? 0 : 4 * NumTraits<Scalar>::AddCost,
-    PacketAccess = IsInteger || packet_traits<Scalar>::HasFloor
-  };
+struct functor_traits<scalar_round_op_google<Scalar>> {
+  enum { Cost = 4 * NumTraits<Scalar>::AddCost, PacketAccess = false };
 };
 
 #undef ENABLE_FLOAT_EQUALITY_WARNING
@@ -632,11 +455,11 @@ struct functor_traits<scalar_round_up_op<Scalar, IsInteger>> {
 template <typename Scalar>
 struct bitwise_xor_op {
   EIGEN_EMPTY_STRUCT_CTOR(bitwise_xor_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
   operator()(const Scalar& x, const Scalar& y) const {
     return x ^ y;
   }
-  template <typename Packet>
+  typedef typename Eigen::internal::packet_traits<Scalar>::type Packet;
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& a,
                                                         const Packet& b) const {
     return Eigen::internal::pxor(a, b);
@@ -648,127 +471,43 @@ struct functor_traits<bitwise_xor_op<Scalar>> {
   enum { Cost = Eigen::NumTraits<Scalar>::AddCost, PacketAccess = true };
 };
 
+// TODO(srvasude): Add packet versions of this operation.
 template <typename Scalar>
 struct xlogy_op {
   EIGEN_EMPTY_STRUCT_CTOR(xlogy_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
   operator()(const Scalar& x, const Scalar& y) const {
     if (x == Scalar(0.)) {
       return Scalar(0.);
     }
     return x * numext::log(y);
   }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    Packet zeros = pzero(x);
-    Packet mask = pcmp_eq(x, zeros);
-    scalar_log_op<Scalar> log_op;
-    Packet log_y = log_op.packetOp(y);
-    Packet x_log_y = pmul(x, log_y);
-    return pselect(mask, x, x_log_y);
-  }
 };
 
 template <typename Scalar>
 struct functor_traits<xlogy_op<Scalar>> {
   enum {
-    Cost = functor_traits<scalar_log_op<Scalar>>::Cost +
-           Eigen::NumTraits<Scalar>::MulCost,
-    PacketAccess = functor_traits<scalar_log_op<Scalar>>::PacketAccess
+    Cost = (sizeof(Scalar) == 4 ? 40 : 85) + Eigen::NumTraits<Scalar>::MulCost,
+    PacketAccess = false
   };
 };
 
 template <typename Scalar>
-struct xlog1py_op {
-  EIGEN_EMPTY_STRUCT_CTOR(xlog1py_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
-  operator()(const Scalar& x, const Scalar& y) const {
-    if (x == Scalar(0.)) {
-      return Scalar(0.);
-    }
-    return x * numext::log1p(y);
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    Packet zeros = pzero(x);
-    Packet mask = pcmp_eq(x, zeros);
-    scalar_log1p_op<Scalar> log1p_op;
-    Packet log1p_y = log1p_op.packetOp(y);
-    Packet x_log1p_y = pmul(x, log1p_y);
-    return pselect(mask, x, x_log1p_y);
-  }
-};
-
-template <typename Scalar>
-struct functor_traits<xlog1py_op<Scalar>> {
-  enum {
-    Cost = functor_traits<scalar_log1p_op<Scalar>>::Cost +
-           Eigen::NumTraits<Scalar>::MulCost,
-#if TENSORFLOW_USE_ROCM
-    PacketAccess = false,
-#else
-    PacketAccess = functor_traits<scalar_log1p_op<Scalar>>::PacketAccess
-#endif
-  };
-};
-
-template <typename Scalar>
+// TODO(srvasude): Add packet versions of this operation.
 struct xdivy_op {
   EIGEN_EMPTY_STRUCT_CTOR(xdivy_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
   operator()(const Scalar& x, const Scalar& y) const {
     if (x == Scalar(0.)) {
       return Scalar(0.);
     }
     return x / y;
   }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x,
-                                                        const Packet& y) const {
-    Packet zeros = pzero(x);
-    Packet mask = pcmp_eq(x, zeros);
-    Packet x_div_y = pdiv(x, y);
-    return pselect(mask, x, x_div_y);
-  }
 };
 
 template <typename Scalar>
 struct functor_traits<xdivy_op<Scalar>> {
-  enum {
-    Cost =
-        Eigen::NumTraits<Scalar>::AddCost +
-        Eigen::internal::scalar_div_cost<Scalar,
-                                         packet_traits<Scalar>::HasDiv>::value,
-    PacketAccess = packet_traits<Scalar>::HasDiv
-  };
-};
-
-template <typename T>
-struct scalar_erfinv_op {
-  EIGEN_EMPTY_STRUCT_CTOR(scalar_erfinv_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x) const {
-    constexpr T half = T(0.5);
-    T y = numext::ndtri(half * x + half);
-    constexpr T half_sqrt = T(M_SQRT1_2);
-    return y * half_sqrt;
-  }
-  template <typename Packet>
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Packet packetOp(const Packet& x) const {
-    Packet half = pset1<Packet>(T(0.5));
-    Packet y = pndtri<Packet>(pmadd(half, x, half));
-    Packet half_sqrt = pset1<Packet>(T(M_SQRT1_2));
-    return pmul(y, half_sqrt);
-  }
-};
-
-template <typename T>
-struct functor_traits<scalar_erfinv_op<T>> {
-  enum {
-    Cost = functor_traits<scalar_ndtri_op<T>>::Cost + NumTraits<T>::AddCost,
-    PacketAccess = packet_traits<T>::HasNdtri,
-  };
+  enum { Cost = Eigen::NumTraits<Scalar>::MulCost, PacketAccess = false };
 };
 
 }  // end namespace internal
@@ -793,7 +532,7 @@ struct base {
   // operation. Each functor for which this is enabled increases the
   // code size, so by default this is disabled for binary functors and
   // is enabled on a per-op basis as needed.
-  static constexpr bool use_bcast_optimization = false;
+  static const bool use_bcast_optimization = false;
 
   // operator() has the signature:
   //  out_type operator()(in_type in0, in_type in1 ...)
@@ -811,24 +550,24 @@ struct base {
 
   // Whether the functor can error out.  Currently applies only to integer
   // div and mod.
-  static constexpr bool has_errors = false;
+  static const bool has_errors = false;
 };
 
 // For now, we only apply certain speed optimization for
 // float/double's broadcast binary op.
 template <typename T>
 struct use_bcast_optimization {
-  static constexpr bool value = false;
+  static const bool value = false;
 };
 
 template <>
 struct use_bcast_optimization<float> {
-  static constexpr bool value = true;
+  static const bool value = true;
 };
 
 template <>
 struct use_bcast_optimization<double> {
-  static constexpr bool value = true;
+  static const bool value = true;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -917,13 +656,7 @@ template <typename T>
 struct erfc : base<T, Eigen::internal::scalar_erfc_op<T>> {};
 
 template <typename T>
-struct ndtri : base<T, Eigen::internal::scalar_ndtri_op<T>> {};
-
-template <typename T>
-struct erfinv : base<T, Eigen::internal::scalar_erfinv_op<T>> {};
-
-template <typename T>
-struct sigmoid : base<T, Eigen::internal::scalar_logistic_op<T>> {};
+struct sigmoid : base<T, Eigen::internal::scalar_sigmoid_op<T>> {};
 
 template <typename T>
 struct sin : base<T, Eigen::internal::scalar_sin_op<T>> {};
@@ -943,6 +676,12 @@ struct acos : base<T, Eigen::internal::scalar_acos_op<T>> {};
 template <typename T>
 struct atan : base<T, Eigen::internal::scalar_atan_op<T>> {};
 
+template <typename T>
+struct bessel_i0e : base<T, Eigen::internal::scalar_i0e_op<T>> {};
+
+template <typename T>
+struct bessel_i1e : base<T, Eigen::internal::scalar_i1e_op<T>> {};
+
 struct logical_not : base<bool, Eigen::internal::scalar_boolean_not_op<bool>> {
 };
 
@@ -950,7 +689,7 @@ struct logical_not : base<bool, Eigen::internal::scalar_boolean_not_op<bool>> {
 template <typename T>
 struct invert_op {
   EIGEN_EMPTY_STRUCT_CTOR(invert_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& a) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& a) const {
     return ~a;
   }
 };
@@ -974,13 +713,31 @@ template <typename T>
 struct floor : base<T, Eigen::internal::scalar_floor_op<T>> {};
 
 template <typename T>
-struct round : base<T, Eigen::internal::scalar_round_half_to_even_op<T>> {};
+struct round : base<T, Eigen::internal::scalar_round_op_google<T>> {};
 
 template <typename T>
 struct ceil : base<T, Eigen::internal::scalar_ceil_op<T>> {};
 
+/** this should go in Eigen
+ * \brief Template functor to compute the round to int value of a scalar
+ */
+template <typename Scalar>
+struct scalar_rint_op {
+  EIGEN_EMPTY_STRUCT_CTOR(scalar_rint_op)
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Scalar
+  operator()(const Scalar& a) const {
+#if defined(__CUDACC__)
+    return ::rint(a);
+#elif defined(__ANDROID__)
+    return rint(a);
+#else
+    return std::rint(a);
+#endif
+  }
+};
+
 template <typename T>
-struct rint : base<T, Eigen::internal::scalar_rint_op<T>> {};
+struct rint : base<T, scalar_rint_op<T>> {};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Binary functors
@@ -997,25 +754,22 @@ struct rint : base<T, Eigen::internal::scalar_rint_op<T>> {};
 // pow(x, y) = x ^ y
 // maximum(x, y) = x > y ? x : y
 // minimum(x, y) = x < y ? x : y
-// squared_difference(x, y) = conj(x - y) * (x - y)
+// squared_difference(x, y) = (x - y) * (x - y)
 
 template <typename T>
 struct add : base<T, Eigen::internal::scalar_sum_op<T>> {
-  static constexpr bool use_bcast_optimization = true;
+  static const bool use_bcast_optimization = true;
 };
 
 template <typename T>
 struct sub : base<T, Eigen::internal::scalar_difference_op<T>> {
-  static constexpr bool use_bcast_optimization = true;
+  static const bool use_bcast_optimization = true;
 };
 
 template <typename T>
 struct mul : base<T, Eigen::internal::scalar_product_op<T>> {
-  static constexpr bool use_bcast_optimization = true;
+  static const bool use_bcast_optimization = true;
 };
-
-template <typename T>
-struct mul_no_nan : base<T, Eigen::internal::mul_no_nan_op<T>> {};
 
 template <typename T>
 struct div : base<T, Eigen::internal::scalar_quotient_op<T>> {};
@@ -1023,7 +777,7 @@ struct div : base<T, Eigen::internal::scalar_quotient_op<T>> {};
 template <typename T>
 struct safe_div : base<T, Eigen::internal::safe_div_or_mod_op<
                               T, Eigen::internal::scalar_quotient_op<T>>> {
-  static constexpr bool has_errors = true;
+  static const bool has_errors = true;
 };
 
 template <typename T>
@@ -1038,7 +792,7 @@ struct mod : base<T, Eigen::internal::scalar_mod2_op<T>> {};
 template <typename T>
 struct safe_mod : base<T, Eigen::internal::safe_div_or_mod_op<
                               T, Eigen::internal::scalar_mod2_op<T>>> {
-  static constexpr bool has_errors = true;
+  static const bool has_errors = true;
 };
 
 template <typename T>
@@ -1047,7 +801,7 @@ struct floor_fmod : base<T, Eigen::internal::google_floor_fmod<T>> {};
 template <typename T>
 struct safe_floor_mod : base<T, Eigen::internal::safe_div_or_mod_op<
                                     T, Eigen::internal::google_floor_mod<T>>> {
-  static constexpr bool has_errors = true;
+  static const bool has_errors = true;
 };
 
 template <typename T>
@@ -1056,27 +810,25 @@ struct floor_div : base<T, Eigen::internal::google_floor_div<T>> {};
 template <typename T>
 struct safe_floor_div : base<T, Eigen::internal::safe_div_or_mod_op<
                                     T, Eigen::internal::google_floor_div<T>>> {
-  static constexpr bool has_errors = true;
+  static const bool has_errors = true;
 };
 
 template <typename T>
 struct floor_div_real : base<T, Eigen::internal::google_floor_div_real<T>> {};
 
 template <typename T>
-struct pow : base<T, Eigen::internal::scalar_pow_op<T, T>> {};
+struct pow : base<T, Eigen::internal::scalar_binary_pow_op_google<T, T>> {};
 
 template <typename T>
 struct safe_pow : base<T, Eigen::internal::safe_scalar_binary_pow_op<T, T>> {
-  static constexpr bool has_errors = true;
+  static const bool has_errors = true;
 };
 
 template <typename T>
-struct maximum
-    : base<T, Eigen::internal::scalar_max_op<T, T, Eigen::PropagateNaN>> {};
+struct maximum : base<T, Eigen::internal::scalar_max_op<T>> {};
 
 template <typename T>
-struct minimum
-    : base<T, Eigen::internal::scalar_min_op<T, T, Eigen::PropagateNaN>> {};
+struct minimum : base<T, Eigen::internal::scalar_min_op<T>> {};
 
 template <typename T>
 struct igamma : base<T, Eigen::internal::scalar_igamma_op<T>> {};
@@ -1099,7 +851,7 @@ struct scalar_atan2_op {
   EIGEN_EMPTY_STRUCT_CTOR(scalar_atan2_op)
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE Scalar
   operator()(const Scalar& y, const Scalar& x) const {
-#if TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
     return ::atan2(y, x);
 #else
     return std::atan2(y, x);
@@ -1112,16 +864,15 @@ struct atan2 : base<T, scalar_atan2_op<T>> {};
 
 template <typename T>
 struct squared_difference
-    : base<T, Eigen::internal::scalar_squared_difference_op<T>> {};
+    : base<T, Eigen::internal::scalar_compose_op<
+                  T, Eigen::internal::scalar_square_op<T>,
+                  Eigen::internal::scalar_difference_op<T>>> {};
 
 template <typename T>
 struct xdivy : base<T, Eigen::internal::xdivy_op<T>> {};
 
 template <typename T>
 struct xlogy : base<T, Eigen::internal::xlogy_op<T>> {};
-
-template <typename T>
-struct xlog1py : base<T, Eigen::internal::xlog1py_op<T>> {};
 
 template <typename T>
 struct less : base<T, Eigen::internal::less<T>, bool> {};
@@ -1148,8 +899,8 @@ struct logical_or : base<bool, Eigen::internal::scalar_boolean_or_op> {};
 template <typename T>
 struct bitwise_and_op {
   EIGEN_EMPTY_STRUCT_CTOR(bitwise_and_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     return x & y;
   }
 };
@@ -1157,8 +908,8 @@ struct bitwise_and_op {
 template <typename T>
 struct bitwise_or_op {
   EIGEN_EMPTY_STRUCT_CTOR(bitwise_or_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     return x | y;
   }
 };
@@ -1175,8 +926,8 @@ struct bitwise_xor : base<T, Eigen::internal::bitwise_xor_op<T>> {};
 template <typename T>
 struct left_shift_op {
   EIGEN_EMPTY_STRUCT_CTOR(left_shift_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     // Avoids UB: don't shift by larger than the bitwidth of T, and
     // performs left shifts as unsigned shifts.
     T y_clamped = y;
@@ -1193,8 +944,8 @@ struct left_shift_op {
 template <typename T>
 struct right_shift_op {
   EIGEN_EMPTY_STRUCT_CTOR(right_shift_op)
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE T operator()(const T& x,
-                                                     const T& y) const {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const T operator()(const T& x,
+                                                           const T& y) const {
     // Avoids UB: don't shift by larger than the bitwidth of T.
     T y_clamped = y;
     if (y_clamped < 0) {
@@ -1325,18 +1076,6 @@ struct BatchSelectFunctor {
                   TTypes<bool>::ConstVec cond_vec,
                   typename TTypes<T>::ConstMatrix then_flat_outer_dims,
                   typename TTypes<T>::ConstMatrix else_flat_outer_dims);
-};
-
-template <typename Device, typename T, int NDIMS>
-struct BCastSelectFunctor {
-  void operator()(const Device& d,
-                  typename TTypes<T, NDIMS>::Tensor output_tensor,
-                  typename TTypes<bool, NDIMS>::ConstTensor cond_tensor,
-                  typename TTypes<T, NDIMS>::ConstTensor then_tensor,
-                  typename TTypes<T, NDIMS>::ConstTensor else_tensor,
-                  typename Eigen::array<Eigen::DenseIndex, NDIMS> cond_bcast,
-                  typename Eigen::array<Eigen::DenseIndex, NDIMS> then_bcast,
-                  typename Eigen::array<Eigen::DenseIndex, NDIMS> else_bcast);
 };
 
 }  // end namespace functor

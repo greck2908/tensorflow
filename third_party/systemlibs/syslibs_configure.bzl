@@ -1,3 +1,4 @@
+# -*- Python -*-
 """Repository rule for system library autoconfiguration.
 
 `syslibs_configure` depends on the following environment variables:
@@ -11,41 +12,31 @@ _TF_SYSTEM_LIBS = "TF_SYSTEM_LIBS"
 VALID_LIBS = [
     "absl_py",
     "astor_archive",
-    "astunparse_archive",
     "boringssl",
+    "com_github_googleapis_googleapis",
     "com_github_googlecloudplatform_google_cloud_cpp",
-    "com_github_grpc_grpc",
-    "com_google_protobuf",
     "com_googlesource_code_re2",
     "curl",
     "cython",
-    "dill_archive",
     "double_conversion",
-    "enum34_archive",
     "flatbuffers",
-    "functools32_archive",
     "gast_archive",
-    "gif",
-    "hwloc",
+    "gif_archive",
+    "grpc",
     "icu",
+    "jpeg",
     "jsoncpp_git",
-    "libjpeg_turbo",
     "lmdb",
     "nasm",
     "nsync",
-    "opt_einsum_archive",
     "org_sqlite",
-    "pasta",
     "pcre",
-    "png",
-    "pybind11",
+    "png_archive",
     "six_archive",
     "snappy",
-    "tblib_archive",
+    "swig",
     "termcolor_archive",
-    "typing_extensions_archive",
-    "wrapt",
-    "zlib",
+    "zlib_archive",
 ]
 
 def auto_configure_fail(msg):

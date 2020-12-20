@@ -49,7 +49,7 @@ std::vector<HloPosition> HloBuffer::ComputePositions() const {
                      value->positions().end());
   }
   // Remove duplicates and sort positions.
-  absl::c_sort(positions);
+  std::sort(positions.begin(), positions.end());
   positions.erase(std::unique(positions.begin(), positions.end()),
                   positions.end());
   return positions;

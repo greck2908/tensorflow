@@ -23,7 +23,6 @@ limitations under the License.
 #include "tensorflow/core/lib/gtl/map_util.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/platform/types.h"
-#include "tensorflow/core/util/dump_graph.h"
 
 namespace tensorflow {
 
@@ -48,12 +47,13 @@ struct EndpointEq {
 static Status ProcessMemoryTypes(
     const DeviceType& device_type, const Graph* g,
     const std::function<Status(const Edge*, MemoryType, MemoryType)>& fn) {
-  if (device_type != DEVICE_GPU) {
-    // On non-GPU devices, HOST_MEMORY and DEVICE_MEMORY are always compatible.
+  if (device_type != DEVICE_GPU && device_type != DEVICE_SYCL) {
+    // On non-GPU and non-SYCL devices, HOST_MEMORY and DEVICE_MEMORY are always
+    // compatible.
     return Status::OK();
   }
-  // For GPU, HOST_MEMORY and DEVICE_MEMORY is not compatible. I.e., a
-  // conversion/transfer must be done.
+  // For GPU and SYCL device, HOST_MEMORY and DEVICE_MEMORY is not
+  // compatible. I.e., a conversion/transfer must be done.
   //
   // {node id, slot id} -> memory type.
   typedef std::unordered_map<Endpoint, MemoryType, EndpointHash, EndpointEq>
@@ -128,8 +128,6 @@ static Node* Send(Graph* g, const string& tensor_name,
                   .Attr("send_device_incarnation", 0)  // Do not care.
                   .Attr("recv_device", device_name)
                   .Attr("_hostmem_sendrecv", true)
-                  .Attr("_src", edge->src()->name())
-                  .Attr("_dst", edge->dst()->name())
                   .Finalize(g, &ret));
   return ret;
 }
@@ -145,8 +143,6 @@ static Node* Recv(Graph* g, const string& tensor_name,
           .Attr("send_device_incarnation", 0)
           .Attr("recv_device", device_name)
           .Attr("_hostmem_sendrecv", true)
-          .Attr("_src", edge->src()->name())
-          .Attr("_dst", edge->dst()->name())
           .Finalize(g, &ret));
   return ret;
 }
@@ -203,12 +199,6 @@ Status EnsureMemoryTypes(const DeviceType& device_type,
       g->RemoveEdge(e);
     }
   }
-
-  if (VLOG_IS_ON(2)) {
-    VLOG(2) << "Dumped graph after EnsureMemoryTypes to "
-            << DumpGraphToFile("EnsureMemoryTypes", *g);
-  }
-
   return ValidateMemoryTypes(device_type, g);
 }
 

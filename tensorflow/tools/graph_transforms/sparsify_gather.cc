@@ -18,17 +18,19 @@ limitations under the License.
 #include <unordered_map>
 
 #include "tensorflow/c/checkpoint_reader.h"
-#include "tensorflow/core/common_runtime/graph_constructor.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/graph/graph_constructor.h"
 #include "tensorflow/core/graph/node_builder.h"
 #include "tensorflow/core/graph/subgraph.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/init_main.h"
 #include "tensorflow/core/public/session.h"
+#include "tensorflow/core/util/command_line_flags.h"
 #include "tensorflow/core/util/tensor_bundle/tensor_bundle.h"
 #include "tensorflow/tools/graph_transforms/transform_utils.h"
 
 namespace tensorflow {
+using str_util::Join;
 using str_util::Split;
 using str_util::StringReplace;
 using strings::StrCat;
@@ -87,11 +89,11 @@ void CreateConstNode(const Tensor& tensor, const string& name,
 
 string GetMonolithicTensorKey(const string& tensor_slice_name) {
   std::vector<string> names = Split(tensor_slice_name, "/");
-  if (absl::StartsWith(names[names.size() - 1], "part_")) {
+  if (str_util::StartsWith(names[names.size() - 1], "part_")) {
     CHECK_GE(names.size(), 2);
     names.pop_back();
   }
-  return absl::StrJoin(names, "/");
+  return Join(names, "/");
 }
 
 Status ObtainTensorSlice(const GraphDef& input_graph_def,
@@ -101,8 +103,8 @@ Status ObtainTensorSlice(const GraphDef& input_graph_def,
   for (const auto& node : input_graph_def.node()) {
     std::vector<string> node_name_parts = Split(node.name(), "/");
     if (node_name_parts.size() == 2 &&
-        absl::StartsWith(node_name_parts[0], "save") &&
-        absl::StartsWith(node_name_parts[1], "Assign") &&
+        str_util::StartsWith(node_name_parts[0], "save") &&
+        str_util::StartsWith(node_name_parts[1], "Assign") &&
         node.input(0) == target_name) {
       restore_node_name = node.input(1);
       break;
@@ -126,7 +128,7 @@ Status ObtainTensorSlice(const GraphDef& input_graph_def,
     if (node.name() == tensor_names_node) {
       Tensor tensor_names_tensor;
       TF_RETURN_IF_ERROR(GetNodeAttr(node, "value", &tensor_names_tensor));
-      const auto& tensor_names_value = tensor_names_tensor.flat<tstring>();
+      const auto& tensor_names_value = tensor_names_tensor.flat<string>();
       for (int i = 0; i < tensor_names_value.size(); i++) {
         if (tensor_names_value(i) == GetMonolithicTensorKey(target_name)) {
           offset = i;
@@ -144,7 +146,7 @@ Status ObtainTensorSlice(const GraphDef& input_graph_def,
       Tensor shape_and_slices_tensor;
       TF_RETURN_IF_ERROR(GetNodeAttr(node, "value", &shape_and_slices_tensor));
       const auto& shape_and_slices_value =
-          shape_and_slices_tensor.flat<tstring>();
+          shape_and_slices_tensor.flat<string>();
       *shape_slice_string = shape_and_slices_value(offset);
       return Status::OK();
     }
@@ -340,7 +342,7 @@ Status SparsifyGatherInternal(
                 weights_node.name(), ckpt_reader,
                 (*shapes_and_slices)[weights_node.name()], &weight));
           }
-          // Add both weight and identity node names.
+          // Add both both weight and identity node names.
           removed_node_names.push_back(weights_node.name());
           removed_node_names.push_back(match.inputs[0].node.name());
           for (auto input_node : match.inputs[0].node.input()) {
@@ -478,7 +480,7 @@ Status SparsifyGatherInternal(
     }
 
     // Add nodes with a reference count of 0 for deletion.
-    for (const auto& entry : refs) {
+    for (auto entry : refs) {
       if (entry.second == 0) {
         removed_node_names.push_back(entry.first);
       }

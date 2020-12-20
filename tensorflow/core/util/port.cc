@@ -15,6 +15,9 @@ limitations under the License.
 
 #include "tensorflow/core/util/port.h"
 
+#if GOOGLE_CUDA
+#include "cuda/include/cuda.h"
+#endif
 
 namespace tensorflow {
 
@@ -26,33 +29,8 @@ bool IsGoogleCudaEnabled() {
 #endif
 }
 
-bool IsBuiltWithROCm() {
-#if TENSORFLOW_USE_ROCM
-  return true;
-#else
-  return false;
-#endif
-}
-
-bool IsBuiltWithXLA() {
-#if TENSORFLOW_USE_XLA
-  return true;
-#else
-  return false;
-#endif
-}
-
-bool IsBuiltWithNvcc() {
-#if TENSORFLOW_USE_NVCC
-  return true;
-#else
-  return false;
-#endif
-}
-
-bool GpuSupportsHalfMatMulAndConv() {
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+bool CudaSupportsHalfMatMulAndConv() {
+#if GOOGLE_CUDA
   return true;
 #else
   return false;

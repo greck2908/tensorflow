@@ -13,47 +13,39 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 #define EIGEN_USE_GPU
 
 #include "tensorflow/core/kernels/cwise_op_clip.h"
 #include "tensorflow/core/kernels/cwise_ops_gpu_common.cu.h"
-#include "tensorflow/core/util/gpu_kernel_helper.h"
+#include "tensorflow/core/util/cuda_kernel_helper.h"
 
 namespace tensorflow {
 
 template <typename T>
-__global__ void UnaryClipCustomKernel(const int32 size_in,
-                                      const T *__restrict__ in0,
-                                      const T *__restrict__ in1,
-                                      const T *__restrict__ in2,
-                                      T *__restrict__ out) {
-  GPU_1D_KERNEL_LOOP(i, size_in) {
+__global__ void UnaryClipCustomKernel(const int32 size_in, const T *in0,
+                                      const T *in1, const T *in2, T *out) {
+  CUDA_1D_KERNEL_LOOP(i, size_in) {
     T value = in2[0] < in0[i] ? in2[0] : in0[i];
     out[i] = value < in1[0] ? in1[0] : value;
   }
 }
 
 template <typename T>
-__global__ void BinaryRightClipCustomKernel(const int32 size_in,
-                                            const T *__restrict__ in0,
-                                            const T *__restrict__ in1,
-                                            const T *__restrict__ in2,
-                                            T *__restrict__ out) {
-  GPU_1D_KERNEL_LOOP(i, size_in) {
+__global__ void BinaryRightClipCustomKernel(const int32 size_in, const T *in0,
+                                            const T *in1, const T *in2,
+                                            T *out) {
+  CUDA_1D_KERNEL_LOOP(i, size_in) {
     T value = in2[i] < in0[i] ? in2[i] : in0[i];
     out[i] = value < in1[0] ? in1[0] : value;
   }
 }
 
 template <typename T>
-__global__ void BinaryLeftClipCustomKernel(const int32 size_in,
-                                           const T *__restrict__ in0,
-                                           const T *__restrict__ in1,
-                                           const T *__restrict__ in2,
-                                           T *__restrict__ out) {
-  GPU_1D_KERNEL_LOOP(i, size_in) {
+__global__ void BinaryLeftClipCustomKernel(const int32 size_in, const T *in0,
+                                           const T *in1, const T *in2, T *out) {
+  CUDA_1D_KERNEL_LOOP(i, size_in) {
     T value = in2[0] < in0[i] ? in2[0] : in0[i];
     out[i] = value < in1[i] ? in1[i] : value;
   }
@@ -68,12 +60,12 @@ struct UnaryClipOp<GPUDevice, T> {
                   typename TTypes<T>::ConstFlat &in1_flat,
                   typename TTypes<T>::ConstFlat &in2_flat,
                   typename TTypes<T>::Flat &out_flat) const {
-    GpuLaunchConfig config = GetGpuLaunchConfig(in0_flat.size(), d);
+    CudaLaunchConfig config = GetCudaLaunchConfig(in0_flat.size(), d);
 
-    TF_CHECK_OK(GpuLaunchKernel(
-        UnaryClipCustomKernel<T>, config.block_count, config.thread_per_block,
-        0, d.stream(), in0_flat.size(), in0_flat.data(), in1_flat.data(),
-        in2_flat.data(), out_flat.data()));
+    UnaryClipCustomKernel<T>
+        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
+            in0_flat.size(), in0_flat.data(), in1_flat.data(), in2_flat.data(),
+            out_flat.data());
   }
 };
 
@@ -84,12 +76,12 @@ struct BinaryRightClipOp<GPUDevice, T> {
                   typename TTypes<T>::ConstFlat &in1_flat,
                   typename TTypes<T>::ConstFlat &in2_flat,
                   typename TTypes<T>::Flat &out_flat) const {
-    GpuLaunchConfig config = GetGpuLaunchConfig(in0_flat.size(), d);
+    CudaLaunchConfig config = GetCudaLaunchConfig(in0_flat.size(), d);
 
-    TF_CHECK_OK(GpuLaunchKernel(
-        BinaryRightClipCustomKernel<T>, config.block_count,
-        config.thread_per_block, 0, d.stream(), in0_flat.size(),
-        in0_flat.data(), in1_flat.data(), in2_flat.data(), out_flat.data()));
+    BinaryRightClipCustomKernel<T>
+        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
+            in0_flat.size(), in0_flat.data(), in1_flat.data(), in2_flat.data(),
+            out_flat.data());
   }
 };
 
@@ -100,12 +92,12 @@ struct BinaryLeftClipOp<GPUDevice, T> {
                   typename TTypes<T>::ConstFlat &in1_flat,
                   typename TTypes<T>::ConstFlat &in2_flat,
                   typename TTypes<T>::Flat &out_flat) const {
-    GpuLaunchConfig config = GetGpuLaunchConfig(in0_flat.size(), d);
+    CudaLaunchConfig config = GetCudaLaunchConfig(in0_flat.size(), d);
 
-    TF_CHECK_OK(GpuLaunchKernel(
-        BinaryLeftClipCustomKernel<T>, config.block_count,
-        config.thread_per_block, 0, d.stream(), in0_flat.size(),
-        in0_flat.data(), in1_flat.data(), in2_flat.data(), out_flat.data()));
+    BinaryLeftClipCustomKernel<T>
+        <<<config.block_count, config.thread_per_block, 0, d.stream()>>>(
+            in0_flat.size(), in0_flat.data(), in1_flat.data(), in2_flat.data(),
+            out_flat.data());
   }
 };
 
@@ -139,4 +131,4 @@ INSTANTIATE_GPU(uint16);
 }  // namespace functor
 }  // namespace tensorflow
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA

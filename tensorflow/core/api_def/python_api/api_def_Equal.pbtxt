@@ -1,4 +1,9 @@
 op {
   graph_op_name: "Equal"
-  visibility: HIDDEN
+  endpoint {
+    name: "math.equal"
+  }
+  endpoint {
+    name: "equal"
+  }
 }

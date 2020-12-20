@@ -18,7 +18,6 @@ limitations under the License.
 #include "tensorflow/core/framework/node_def_util.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/lib/hash/hash.h"
-#include "tensorflow/core/lib/strings/numbers.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 
 namespace tensorflow {
@@ -26,8 +25,7 @@ namespace graph_transforms {
 
 namespace {
 inline bool IsMerge(const NodeDef& node_def) {
-  return node_def.op() == "Merge" || node_def.op() == "RefMerge" ||
-         node_def.op() == "_XlaMerge";
+  return node_def.op() == "Merge" || node_def.op() == "RefMerge";
 }
 
 void RecordMatchedNodes(const NodeMatch& match,
@@ -90,7 +88,7 @@ void NodeNamePartsFromInput(const string& input_name, string* prefix,
     *suffix = ":" + input_parts[1];
   }
   StringPiece node_name_piece(input_parts[0]);
-  if (absl::ConsumePrefix(&node_name_piece, "^")) {
+  if (str_util::ConsumePrefix(&node_name_piece, "^")) {
     *prefix = "^";
   } else {
     *prefix = "";
@@ -202,7 +200,7 @@ Status SortByExecutionOrder(const GraphDef& input_graph_def,
       // for merge only wait for one non-control input.
       int32 num_control_edges = 0;
       for (int i = 0; i < node_def.input_size(); ++i) {
-        if (absl::StartsWith(node_def.input(i), "^")) {
+        if (str_util::StartsWith(node_def.input(i), "^")) {
           num_control_edges++;
         }
       }
@@ -596,18 +594,12 @@ Status GetInOutTypes(const NodeDef& node_def, DataTypeVector* inputs,
 
 Status TensorShapeFromString(const string& shape_string, TensorShape* result) {
   if (shape_string.empty()) {
-    return errors::InvalidArgument("Specified shape is empty.");
+    return errors::InvalidArgument("Specificed shape is empty.");
   }
-  std::vector<string> dims_as_str = str_util::Split(shape_string, ",");
   std::vector<int64> dims;
-  for (const string& dim : dims_as_str) {
-    int64 tmp;
-    if (strings::safe_strto64(dim, &tmp)) {
-      dims.push_back(tmp);
-    } else {
-      return errors::InvalidArgument("Could parse as shape: '", shape_string,
-                                     "'");
-    }
+  if (!str_util::SplitAndParseAsInts(shape_string, ',', &dims)) {
+    return errors::InvalidArgument("Could parse as shape: '", shape_string,
+                                   "'");
   }
   *result = TensorShape(dims);
   return Status::OK();

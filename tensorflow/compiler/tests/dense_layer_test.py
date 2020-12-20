@@ -19,13 +19,11 @@ from __future__ import division
 from __future__ import print_function
 
 import os
-
 import numpy as np
 
 from tensorflow.compiler.tests import test_utils
+from tensorflow.contrib.compiler import jit
 from tensorflow.core.protobuf import config_pb2
-from tensorflow.python.compiler.xla import jit
-from tensorflow.python.framework import ops
 from tensorflow.python.layers import layers
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import variables
@@ -44,7 +42,7 @@ def GetRunMetadataLabels(run_metadata):
 
 def InLabels(labels, substr):
   """Returns true iff one of the labels contains substr."""
-  return any(substr in x for x in labels)
+  return any([substr in x for x in labels])
 
 
 class DenseLayerTest(test.TestCase):
@@ -74,7 +72,7 @@ class DenseLayerTest(test.TestCase):
       x = array_ops.placeholder(shape=[None, None, 3], dtype=np.float32)
       y = layers.dense(x, 3)
 
-      self.evaluate(variables.global_variables_initializer())
+      sess.run(variables.initialize_all_variables())
       run_metadata = config_pb2.RunMetadata()
       test_utils.RunWithWarmup(
           sess,
@@ -94,12 +92,12 @@ class DenseLayerTest(test.TestCase):
     XlaCompile/XlaRun op pair by XLA.
     """
 
-    with self.session() as sess:
+    with self.cached_session() as sess:
       x = array_ops.placeholder(shape=[2, 2, 3], dtype=np.float32)
       with jit_scope():
         y = layers.dense(x, 3)
 
-      self.evaluate(variables.global_variables_initializer())
+      sess.run(variables.initialize_all_variables())
       run_metadata = config_pb2.RunMetadata()
       test_utils.RunWithWarmup(
           sess,
@@ -115,14 +113,20 @@ class DenseLayerTest(test.TestCase):
 
   def testDenseLayerJitScopeUndefinedShape(self):
     """Tests that the dense layer node is properly compiled in jit scope.
+
+    Dense layer uses shape op to get shape of input tensor if its shape is not
+    fully defined. XLA does not cluster shape op with other operators. But in
+    experimental_jit_scope, XLA is forced to compile shape op into its own
+    cluster, causing dense layer to be split into TWO XlaCompile/XlaRun op
+    pairs.
     """
 
-    with self.session() as sess:
+    with self.cached_session() as sess:
       x = array_ops.placeholder(shape=[None, None, 3], dtype=np.float32)
       with jit_scope():
         y = layers.dense(x, 3)
 
-      self.evaluate(variables.global_variables_initializer())
+      sess.run(variables.initialize_all_variables())
       run_metadata = config_pb2.RunMetadata()
       test_utils.RunWithWarmup(
           sess,
@@ -132,14 +136,11 @@ class DenseLayerTest(test.TestCase):
               trace_level=config_pb2.RunOptions.FULL_TRACE))
 
     labels = GetRunMetadataLabels(run_metadata)
-    self.assertEqual(1, self.countXlaOps(labels))
+    self.assertEqual(2, self.countXlaOps(labels))
     self.assertFalse(InLabels(labels, "MatMult"))
 
 
 if __name__ == "__main__":
   os.environ["TF_XLA_FLAGS"] = ("--tf_xla_enable_lazy_compilation=true " +
                                 os.environ.get("TF_XLA_FLAGS", ""))
-  # This test is using Tensorflow sessions which are not compatible with eager
-  # mode.
-  ops.disable_eager_execution()
   test.main()

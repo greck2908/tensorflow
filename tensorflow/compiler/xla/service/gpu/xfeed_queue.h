@@ -20,7 +20,6 @@ limitations under the License.
 #include <functional>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/notification.h"
 #include "tensorflow/core/platform/thread_annotations.h"
@@ -48,10 +47,6 @@ class XfeedQueue {
   // Blocks until the queue is non-empty, then returns the buffer at the head of
   // the queue.
   BufferType BlockingGetNextDestination() {
-    for (const auto& callback : before_get_next_dest_callbacks_) {
-      callback();
-    }
-
     bool became_empty;
     BufferType current_buffer;
     {
@@ -74,10 +69,6 @@ class XfeedQueue {
   void RegisterOnEmptyCallback(std::function<void()> callback) {
     on_empty_callbacks_.push_back(std::move(callback));
   }
-  void RegisterBeforeGetNextDestinationCallback(
-      std::function<void()> callback) {
-    before_get_next_dest_callbacks_.push_back(std::move(callback));
-  }
 
  private:
   tensorflow::mutex mu_;
@@ -86,16 +77,11 @@ class XfeedQueue {
   tensorflow::condition_variable cv_;
 
   // The queue of trees of buffers. Buffer* queue contents are not owned.
-  std::deque<BufferType> enqueued_buffers_ ABSL_GUARDED_BY(mu_);
+  std::deque<BufferType> enqueued_buffers_ GUARDED_BY(mu_);
 
   // List of callbacks which will be called when 'enqueued_buffers_' becomes
   // empty.
   std::vector<std::function<void()>> on_empty_callbacks_;
-
-  // List of callbacks which will be called before BlockingGetNextDestination()
-  // is called. This lets you e.g. call EnqueueDestination() for each call to
-  // BlockingGetNextDestination().
-  std::vector<std::function<void()>> before_get_next_dest_callbacks_;
 };
 
 }  // namespace gpu

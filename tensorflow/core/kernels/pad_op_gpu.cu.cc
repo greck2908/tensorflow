@@ -13,8 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+#if GOOGLE_CUDA
 
 #define EIGEN_USE_GPU
 
@@ -34,9 +33,7 @@ typedef Eigen::GpuDevice GPUDevice;
   template struct functor::Pad<GPUDevice, T, Tpadding, 3>; \
   template struct functor::Pad<GPUDevice, T, Tpadding, 4>; \
   template struct functor::Pad<GPUDevice, T, Tpadding, 5>; \
-  template struct functor::Pad<GPUDevice, T, Tpadding, 6>; \
-  template struct functor::Pad<GPUDevice, T, Tpadding, 7>; \
-  template struct functor::Pad<GPUDevice, T, Tpadding, 8>;
+  template struct functor::Pad<GPUDevice, T, Tpadding, 6>;
 
 #define DEFINE_GPU_SPECS(T)      \
   DEFINE_GPU_PAD_SPECS(T, int32) \
@@ -44,8 +41,7 @@ typedef Eigen::GpuDevice GPUDevice;
 
 TF_CALL_GPU_ALL_TYPES(DEFINE_GPU_SPECS);
 TF_CALL_int8(DEFINE_GPU_SPECS);
-TF_CALL_uint8(DEFINE_GPU_SPECS);
 
 }  // namespace tensorflow
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA

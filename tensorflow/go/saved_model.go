@@ -17,12 +17,8 @@ limitations under the License.
 package tensorflow
 
 import (
-	"fmt"
 	"runtime"
 	"unsafe"
-
-	"github.com/golang/protobuf/proto"
-	corepb "github.com/tensorflow/tensorflow/tensorflow/go/core/protobuf/for_core_protos_go_proto"
 )
 
 // #include <stdlib.h>
@@ -32,9 +28,8 @@ import "C"
 // SavedModel represents the contents of loaded SavedModel.
 // TODO(jhseu): Add and document metagraphdef when we pregenerate protobufs.
 type SavedModel struct {
-	Session    *Session
-	Graph      *Graph
-	Signatures map[string]Signature
+	Session *Session
+	Graph   *Graph
 }
 
 // LoadSavedModel creates a new SavedModel from a model previously
@@ -58,43 +53,22 @@ func LoadSavedModel(exportDir string, tags []string, options *SessionOptions) (*
 		return nil, err
 	}
 	cExportDir := C.CString(exportDir)
-	if len(tags) == 0 {
-		return nil, fmt.Errorf("empty tags are not allowed")
-	}
 	cTags := make([]*C.char, len(tags))
 	for i := range tags {
 		cTags[i] = C.CString(tags[i])
 	}
 	graph := NewGraph()
-	metaGraphDefBuf := C.TF_NewBuffer()
-	defer C.TF_DeleteBuffer(metaGraphDefBuf)
 	// TODO(jhseu): Add support for run_options and meta_graph_def.
-	cSess := C.TF_LoadSessionFromSavedModel(cOpt, nil, cExportDir, (**C.char)(unsafe.Pointer(&cTags[0])), C.int(len(cTags)), graph.c, metaGraphDefBuf, status.c)
+	cSess := C.TF_LoadSessionFromSavedModel(cOpt, nil, cExportDir, (**C.char)(unsafe.Pointer(&cTags[0])), C.int(len(cTags)), graph.c, nil, status.c)
 	for i := range cTags {
 		C.free(unsafe.Pointer(cTags[i]))
 	}
 	C.free(unsafe.Pointer(cExportDir))
-
-	metaGraphDefBytes := C.GoBytes(metaGraphDefBuf.data, C.int(metaGraphDefBuf.length))
-	metaGraphDef := new(corepb.MetaGraphDef)
-	if err := proto.Unmarshal(metaGraphDefBytes, metaGraphDef); err != nil {
-		return nil, err
-	}
-
-	signatures := generateSignatures(metaGraphDef.GetSignatureDef())
 
 	if err := status.Err(); err != nil {
 		return nil, err
 	}
 	s := &Session{c: cSess}
 	runtime.SetFinalizer(s, func(s *Session) { s.Close() })
-	return &SavedModel{Session: s, Graph: graph, Signatures: signatures}, nil
-}
-
-func generateSignatures(pb map[string]*corepb.SignatureDef) map[string]Signature {
-	signatures := make(map[string]Signature)
-	for name, signature := range pb {
-		signatures[name] = signatureDefFromProto(signature)
-	}
-	return signatures
+	return &SavedModel{Session: s, Graph: graph}, nil
 }

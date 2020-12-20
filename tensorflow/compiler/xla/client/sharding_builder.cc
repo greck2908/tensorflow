@@ -20,19 +20,13 @@ namespace sharding_builder {
 
 OpSharding Replicate() {
   OpSharding result;
-  result.set_type(OpSharding::REPLICATED);
-  return result;
-}
-
-OpSharding Manual() {
-  OpSharding result;
-  result.set_type(OpSharding::MANUAL);
+  result.set_type(OpSharding::Type::OpSharding_Type_REPLICATED);
   return result;
 }
 
 OpSharding AssignDevice(int device) {
   OpSharding result;
-  result.set_type(OpSharding::MAXIMAL);
+  result.set_type(OpSharding::Type::OpSharding_Type_MAXIMAL);
   result.add_tile_assignment_dimensions(1);
   result.add_tile_assignment_devices(device);
   return result;
@@ -41,8 +35,8 @@ OpSharding AssignDevice(int device) {
 OpSharding Tile(const Shape& tile_shape,
                 const TileAssignment& tile_assignment) {
   OpSharding result;
-  result.set_type(OpSharding::OTHER);
-  *result.mutable_tile_shape() = tile_shape.ToProto();
+  result.set_type(OpSharding::Type::OpSharding_Type_OTHER);
+  *result.mutable_tile_shape() = tile_shape;
   for (int64 dim : tile_assignment.dimensions()) {
     result.add_tile_assignment_dimensions(dim);
   }
@@ -54,11 +48,11 @@ OpSharding Tile(const Shape& tile_shape,
 
 OpSharding Tile1D(const Shape& tile_shape, int64 num_tiles) {
   OpSharding result;
-  result.set_type(OpSharding::OTHER);
+  result.set_type(OpSharding::Type::OpSharding_Type_OTHER);
 
-  CHECK_EQ(tile_shape.rank(), 1);
+  CHECK_EQ(ShapeUtil::Rank(tile_shape), 1);
   std::vector<int64> dimensions(1, num_tiles);
-  *result.mutable_tile_shape() = tile_shape.ToProto();
+  *result.mutable_tile_shape() = tile_shape;
   auto& tile_dimension =
       (*result.mutable_tile_shape()->mutable_dimensions())[0];
   tile_dimension = CeilOfRatio(static_cast<int64>(tile_dimension), num_tiles);
@@ -71,7 +65,7 @@ OpSharding Tile1D(const Shape& tile_shape, int64 num_tiles) {
 
 OpSharding Tuple(const ShapeTree<OpSharding>& shardings) {
   OpSharding result;
-  result.set_type(OpSharding::TUPLE);
+  result.set_type(OpSharding::Type::OpSharding_Type_TUPLE);
   for (const auto& index_to_sharding : shardings.leaves()) {
     *result.add_tuple_shardings() = index_to_sharding.second;
   }

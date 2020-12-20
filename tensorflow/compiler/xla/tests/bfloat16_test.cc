@@ -76,9 +76,7 @@ XLA_TEST_F(Bfloat16Test, NegateScalarF16) {
                                 error_spec_);
 }
 
-// Disabled on interpreter since BatchNormExpander is not run by default on the
-// interpreter backend.
-XLA_TEST_F(Bfloat16Test, DISABLED_ON_INTERPRETER(BatchNormTraining)) {
+XLA_TEST_F(Bfloat16Test, BatchNormTraining) {
   const int kFeatureIndex = 2;
   XlaBuilder builder(TestName());
 
@@ -112,9 +110,7 @@ XLA_TEST_F(Bfloat16Test, DISABLED_ON_INTERPRETER(BatchNormTraining)) {
   ComputeAndCompareTuple(&builder, expected, {}, ErrorSpec(0.01, 0.02));
 }
 
-// Disabled on interpreter since BatchNormExpander is not run by default on the
-// interpreter backend.
-XLA_TEST_F(Bfloat16Test, DISABLED_ON_INTERPRETER(BatchNormGrad)) {
+XLA_TEST_F(Bfloat16Test, BatchNormGrad) {
   const int kFeatureIndex = 2;
   XlaBuilder builder(TestName());
 

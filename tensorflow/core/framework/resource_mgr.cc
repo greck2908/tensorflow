@@ -15,8 +15,6 @@ limitations under the License.
 
 #include "tensorflow/core/framework/resource_mgr.h"
 
-#include <atomic>
-
 #include "tensorflow/core/framework/device_attributes.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/node_def_util.h"
@@ -26,28 +24,23 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/stringprintf.h"
 #include "tensorflow/core/platform/demangle.h"
-#include "tensorflow/core/platform/stacktrace.h"
 
 namespace tensorflow {
-
-// Used to generate unique names for anonymous variables
-static std::atomic<int64> current_id_;
-
-ResourceHandle MakeResourceHandle(
-    const string& container, const string& name, const DeviceBase& device,
-    const TypeIndex& type_index,
-    const std::vector<DtypeAndPartialTensorShape>& dtypes_and_shapes) {
+ResourceHandle MakeResourceHandle(OpKernelContext* ctx, const string& container,
+                                  const string& name,
+                                  const TypeIndex& type_index) {
   ResourceHandle result;
-  result.set_device(device.name());
-  result.set_container(container);
-  if (name == ResourceHandle::ANONYMOUS_NAME) {
-    result.set_name(strings::StrCat("_AnonymousVar", current_id_.fetch_add(1)));
+  result.set_device(ctx->device()->attributes().name());
+  string actual_container;
+  if (!container.empty()) {
+    actual_container = container;
   } else {
-    result.set_name(name);
+    actual_container = ctx->resource_manager()->default_container();
   }
+  result.set_container(actual_container);
+  result.set_name(name);
   result.set_hash_code(type_index.hash_code());
   result.set_maybe_type_name(type_index.name());
-  result.set_dtypes_and_shapes(dtypes_and_shapes);
   return result;
 }
 
@@ -58,7 +51,7 @@ Status MakeResourceHandleToOutput(OpKernelContext* context, int output_index,
   TF_RETURN_IF_ERROR(
       context->allocate_output(output_index, TensorShape({}), &handle));
   handle->scalar<ResourceHandle>()() =
-      MakeResourceHandle(container, name, *context->device(), type_index);
+      MakeResourceHandle(context, container, name, type_index);
   return Status::OK();
 }
 
@@ -94,28 +87,6 @@ const char* ResourceMgr::DebugTypeName(uint64 hash_code) const {
   }
 }
 
-ResourceMgr::ResourceAndName::ResourceAndName()
-    : resource(nullptr), name(nullptr) {}
-
-ResourceMgr::ResourceAndName::ResourceAndName(ResourceBase* resource,
-                                              string name)
-    : resource(resource), name(absl::make_unique<string>(std::move(name))) {}
-
-ResourceMgr::ResourceAndName::ResourceAndName(
-    ResourceAndName&& other) noexcept {
-  resource = std::move(other.resource);
-  name = std::move(other.name);
-}
-
-ResourceMgr::ResourceAndName::~ResourceAndName() {}
-
-ResourceMgr::ResourceAndName& ResourceMgr::ResourceAndName::operator=(
-    ResourceAndName&& other) noexcept {
-  resource = std::move(other.resource);
-  name = std::move(other.name);
-  return *this;
-}
-
 ResourceMgr::ResourceMgr() : default_container_("localhost") {}
 
 ResourceMgr::ResourceMgr(const string& default_container)
@@ -124,17 +95,14 @@ ResourceMgr::ResourceMgr(const string& default_container)
 ResourceMgr::~ResourceMgr() { Clear(); }
 
 void ResourceMgr::Clear() {
-  // We do the deallocation outside of the lock to avoid a potential deadlock
-  // in case any of the destructors access the resource manager.
-  std::unordered_map<string, Container*> tmp_containers;
-  {
-    mutex_lock l(mu_);
-    tmp_containers = std::move(containers_);
-  }
-  for (const auto& p : tmp_containers) {
+  mutex_lock l(mu_);
+  for (const auto& p : containers_) {
+    for (const auto& q : *p.second) {
+      q.second->Unref();
+    }
     delete p.second;
   }
-  tmp_containers.clear();
+  containers_.clear();
 }
 
 string ResourceMgr::DebugString() const {
@@ -151,8 +119,9 @@ string ResourceMgr::DebugString() const {
     for (const auto& q : *p.second) {
       const Key& key = q.first;
       const char* type = DebugTypeName(key.first);
-      Line l{&container, port::Demangle(type), q.second.name.get(),
-             q.second.resource->DebugString()};
+      const string& resource = key.second;
+      Line l{&container, port::Demangle(type), &resource,
+             q.second->DebugString()};
       lines.push_back(l);
     }
   }
@@ -164,7 +133,7 @@ string ResourceMgr::DebugString() const {
         line.type.c_str(), line.resource->c_str(), line.detail.c_str()));
   }
   std::sort(text.begin(), text.end());
-  return absl::StrJoin(text, "\n");
+  return str_util::Join(text, "\n");
 }
 
 Status ResourceMgr::DoCreate(const string& container, TypeIndex type,
@@ -173,18 +142,11 @@ Status ResourceMgr::DoCreate(const string& container, TypeIndex type,
   if (*b == nullptr) {
     *b = new Container;
   }
-
-  // NOTE: Separating out the construction of the map key and value so that the
-  // key can contain a StringPiece that borrows from the string in the value.
-  ResourceAndName resource_and_name(resource, name);
-  StringPiece borrowed_name(*resource_and_name.name);
-  Container::value_type key_and_value(Key(type.hash_code(), borrowed_name),
-                                      std::move(resource_and_name));
-
-  if ((*b)->insert(std::move(key_and_value)).second) {
+  if ((*b)->insert({{type.hash_code(), name}, resource}).second) {
     TF_RETURN_IF_ERROR(InsertDebugTypeName(type.hash_code(), type.name()));
     return Status::OK();
   }
+  resource->Unref();
   return errors::AlreadyExists("Resource ", container, "/", name, "/",
                                type.name());
 }
@@ -198,12 +160,12 @@ Status ResourceMgr::DoLookup(const string& container, TypeIndex type,
                             " does not exist. (Could not find resource: ",
                             container, "/", name, ")");
   }
-  auto iter = b->find({type.hash_code(), name});
-  if (iter == b->end()) {
+  auto r = gtl::FindPtrOrNull(*b, {type.hash_code(), name});
+  if (r == nullptr) {
     return errors::NotFound("Resource ", container, "/", name, "/", type.name(),
                             " does not exist.");
   }
-  *resource = const_cast<ResourceBase*>(iter->second.resource.get());
+  *resource = const_cast<ResourceBase*>(r);
   (*resource)->Ref();
   return Status::OK();
 }
@@ -211,7 +173,7 @@ Status ResourceMgr::DoLookup(const string& container, TypeIndex type,
 Status ResourceMgr::DoDelete(const string& container, uint64 type_hash_code,
                              const string& resource_name,
                              const string& type_name) {
-  ResourceAndName resource_and_name;
+  ResourceBase* base = nullptr;
   {
     mutex_lock l(mu_);
     Container* b = gtl::FindPtrOrNull(containers_, container);
@@ -223,10 +185,11 @@ Status ResourceMgr::DoDelete(const string& container, uint64 type_hash_code,
       return errors::NotFound("Resource ", container, "/", resource_name, "/",
                               type_name, " does not exist.");
     }
-    std::swap(resource_and_name, iter->second);
+    base = iter->second;
     b->erase(iter);
   }
-  DCHECK(resource_and_name.resource != nullptr);
+  CHECK(base != nullptr);
+  base->Unref();
   return Status::OK();
 }
 
@@ -241,25 +204,21 @@ Status ResourceMgr::Delete(const ResourceHandle& handle) {
 }
 
 Status ResourceMgr::Cleanup(const string& container) {
-  {
-    tf_shared_lock l(mu_);
-    if (!gtl::FindOrNull(containers_, container)) {
-      // Nothing to cleanup.
-      return Status::OK();
-    }
-  }
   Container* b = nullptr;
   {
     mutex_lock l(mu_);
     auto iter = containers_.find(container);
     if (iter == containers_.end()) {
-      // Nothing to cleanup, it's OK (concurrent cleanup).
+      // Nothing to cleanup, it's OK.
       return Status::OK();
     }
     b = iter->second;
     containers_.erase(iter);
   }
   CHECK(b != nullptr);
+  for (const auto& p : *b) {
+    p.second->Unref();
+  }
   delete b;
   return Status::OK();
 }
@@ -327,6 +286,15 @@ Status HandleFromInput(OpKernelContext* ctx, StringPiece input,
 Status DeleteResource(OpKernelContext* ctx, const ResourceHandle& p) {
   TF_RETURN_IF_ERROR(internal::ValidateDevice(ctx, p));
   return ctx->resource_manager()->Delete(p);
+}
+
+Status ResourceHandlesShape(shape_inference::InferenceContext* c) {
+  int n;
+  TF_RETURN_IF_ERROR(c->GetAttr("N", &n));
+  for (int i = 0; i < n; ++i) {
+    c->set_output(i, c->Scalar());
+  }
+  return Status::OK();
 }
 
 }  //  end namespace tensorflow

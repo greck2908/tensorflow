@@ -21,8 +21,6 @@ from __future__ import print_function
 import os
 import re
 
-from absl.testing import parameterized
-
 from tensorflow.core.example import example_pb2
 from tensorflow.core.framework import graph_pb2
 from tensorflow.core.protobuf import saver_pb2
@@ -48,11 +46,13 @@ from tensorflow.python.tools import freeze_graph
 from tensorflow.python.training import saver as saver_lib
 
 
-class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
+class FreezeGraphTest(test_util.TensorFlowTestCase):
 
   def _testFreezeGraph(self, saver_write_version):
 
     checkpoint_prefix = os.path.join(self.get_temp_dir(), "saved_checkpoint")
+    checkpoint_meta_graph_file = os.path.join(self.get_temp_dir(),
+                                              "saved_checkpoint.meta")
     checkpoint_state_name = "checkpoint_state"
     input_graph_name = "input_graph.pb"
     output_graph_name = "output_graph.pb"
@@ -85,6 +85,7 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     filename_tensor_name = "save/Const:0"
     output_graph_path = os.path.join(self.get_temp_dir(), output_graph_name)
     clear_devices = False
+    input_meta_graph = checkpoint_meta_graph_file
 
     freeze_graph.freeze_graph(
         input_graph_path,
@@ -98,7 +99,7 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         clear_devices,
         "",
         "",
-        "",
+        input_meta_graph,
         checkpoint_version=saver_write_version)
 
     # Now we make sure the variable is now a constant, and that the graph still
@@ -126,7 +127,7 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         feature_value])
     return example.SerializeToString()
 
-  def _writeDummySavedModel(self, path, feature_name, tags):
+  def _writeDummySavedModel(self, path, feature_name):
     """Writes a classifier with two input features to the given path."""
     with ops.Graph().as_default():
       examples = array_ops.placeholder(dtypes.string, name="input_node")
@@ -153,19 +154,16 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         builder = saved_model_builder.SavedModelBuilder(path)
         builder.add_meta_graph_and_variables(
             sess,
-            tags,
+            [tag_constants.SERVING],
             signature_def_map={
                 signature_constants.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
                     signature,
-            },
-        )
+            },)
         builder.save(as_text=True)
 
-  @test_util.run_v1_only("b/120545219")
   def testFreezeGraphV1(self):
     self._testFreezeGraph(saver_pb2.SaverDef.V1)
 
-  @test_util.run_v1_only("b/120545219")
   def testFreezeGraphV2(self):
     self._testFreezeGraph(saver_pb2.SaverDef.V2)
 
@@ -221,14 +219,11 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         output = sess.run(output_node)
         self.assertNear(2.0, output, 0.00001)
 
-  @parameterized.named_parameters(
-      ("empty_tags_set", "", []),
-      ("default_tags_set", tag_constants.SERVING, [tag_constants.SERVING]))
-  def testFreezeSavedModel(self, tags_string, tags_list):
+  def testFreezeSavedModel(self):
     tmp_dir = self.get_temp_dir()
     saved_model_dir = os.path.join(tmp_dir, "saved_model_dir")
     feature_name = "feature"
-    self._writeDummySavedModel(saved_model_dir, feature_name, tags_list)
+    self._writeDummySavedModel(saved_model_dir, feature_name)
     output_graph_filename = os.path.join(tmp_dir, "output_graph.pb")
 
     input_saved_model_dir = saved_model_dir
@@ -241,7 +236,7 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     input_meta_graph = False
     checkpoint_path = None
     input_graph_filename = None
-    saved_model_tags = tags_string
+    saved_model_tags = tag_constants.SERVING
 
     freeze_graph.freeze_graph(input_graph_filename, input_saver_def_path,
                               input_binary, checkpoint_path, output_node_names,
@@ -258,11 +253,7 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
         output_graph_def.ParseFromString(f.read())
         _ = importer.import_graph_def(output_graph_def, name="")
 
-      if any(u"ParseExampleV2" in node.name for node in output_graph_def.node):
-        expected_node_count = 10
-      else:
-        expected_node_count = 8
-      self.assertEqual(expected_node_count, len(output_graph_def.node))
+      self.assertEqual(8, len(output_graph_def.node))
       for node in output_graph_def.node:
         self.assertNotEqual("VariableV2", node.op)
         self.assertNotEqual("Variable", node.op)
@@ -326,17 +317,17 @@ class FreezeGraphTest(test_util.TensorFlowTestCase, parameterized.TestCase):
     output_node_names = "save/restore_all"
     output_graph_path = os.path.join(self.get_temp_dir(), output_graph_name)
 
-    with self.assertRaises(ValueError):
-      freeze_graph.freeze_graph_with_def_protos(
-          input_graph_def=sess.graph_def,
-          input_saver_def=None,
-          input_checkpoint=checkpoint_path,
-          output_node_names=output_node_names,
-          restore_op_name="save/restore_all",  # default value
-          filename_tensor_name="save/Const:0",  # default value
-          output_graph=output_graph_path,
-          clear_devices=False,
-          initializer_nodes="")
+    return_value = freeze_graph.freeze_graph_with_def_protos(
+        input_graph_def=sess.graph_def,
+        input_saver_def=None,
+        input_checkpoint=checkpoint_path,
+        output_node_names=output_node_names,
+        restore_op_name="save/restore_all",  # default value
+        filename_tensor_name="save/Const:0",  # default value
+        output_graph=output_graph_path,
+        clear_devices=False,
+        initializer_nodes="")
+    self.assertTrue(return_value, -1)
 
 
 if __name__ == "__main__":

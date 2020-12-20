@@ -14,18 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include "tensorflow/compiler/xla/service/gather_expander.h"
-
-#include "tensorflow/compiler/xla/service/hlo_query.h"
+#include "tensorflow/compiler/xla/service/hlo_parser.h"
 #include "tensorflow/compiler/xla/test.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
 #include "tensorflow/compiler/xla/tests/test_macros.h"
 
 namespace xla {
 namespace {
-
-using GatherExpanderTest = HloTestBase;
-
-TEST_F(GatherExpanderTest, ErrorStatusOnTooManyIndices) {
+TEST(GatherExpanderTest, ErrorStatusOnTooManyIndices) {
   const string hlo_text = R"(
 HloModule TensorFlowGatherMultipleBatchDims
 
@@ -41,11 +36,9 @@ ENTRY main {
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+                          ParseHloString(hlo_text));
 
-  Status status = GatherExpander{GatherExpander::kEliminateAllGathers}
-                      .Run(module.get())
-                      .status();
+  Status status = GatherExpander{}.Run(module.get()).status();
   EXPECT_EQ(status.code(), tensorflow::error::UNIMPLEMENTED);
 
   ASSERT_THAT(
@@ -54,7 +47,7 @@ ENTRY main {
                            "indices are not supported."));
 }
 
-TEST_F(GatherExpanderTest, AvoidDegenerateDims) {
+TEST(GatherExpanderTest, AvoidDegenerateDims) {
   const string hlo_text = R"(
 HloModule TensorFlowGatherV2
 
@@ -70,10 +63,8 @@ ENTRY main {
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed,
-      GatherExpander{GatherExpander::kEliminateAllGathers}.Run(module.get()));
+                          ParseHloString(hlo_text));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, GatherExpander{}.Run(module.get()));
   ASSERT_TRUE(changed);
 
   HloInstruction* while_instr = nullptr;
@@ -98,7 +89,7 @@ ENTRY main {
   // an implementation detail from WhileUtil::MakeCountedLoop).
 
   const Shape& while_shape = while_instr->shape();
-  ASSERT_TRUE(while_shape.IsTuple());
+  ASSERT_TRUE(ShapeUtil::IsTuple(while_shape));
   ASSERT_EQ(ShapeUtil::TupleElementCount(while_shape), 4);
 
   EXPECT_TRUE(ShapeUtil::SameDimensions(
@@ -114,7 +105,7 @@ ENTRY main {
       ShapeUtil::GetTupleElementShape(while_shape, 3)));
 }
 
-TEST_F(GatherExpanderTest, CheckOpMetadata) {
+TEST(GatherExpanderTest, CheckOpMetadata) {
   const string hlo_text = R"(
 HloModule TensorFlowGatherV2
 
@@ -130,13 +121,11 @@ ENTRY main {
 }
 )";
   TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
+                          ParseHloString(hlo_text));
   OpMetadata metadata;
   metadata.set_op_name("Gather");
   module->entry_computation()->root_instruction()->set_metadata(metadata);
-  TF_ASSERT_OK_AND_ASSIGN(
-      bool changed,
-      GatherExpander{GatherExpander::kEliminateAllGathers}.Run(module.get()));
+  TF_ASSERT_OK_AND_ASSIGN(bool changed, GatherExpander{}.Run(module.get()));
   ASSERT_TRUE(changed);
 
   HloInstruction* while_instr = nullptr;
@@ -154,54 +143,5 @@ ENTRY main {
          "after gather expansion";
   EXPECT_EQ(while_instr->metadata().op_name(), "Gather");
 }
-
-TEST_F(GatherExpanderTest, EliminateSimpleGathersSkipsNontrivialGather) {
-  const string hlo_text = R"(
-HloModule TensorFlowGatherV1
-
-ENTRY main {
-  operand = s32[3,3] parameter(0)
-  indices = s32[2] parameter(1)
-  ROOT gather = s32[2,3] gather(operand, indices),
-      offset_dims={1},
-      collapsed_slice_dims={0},
-      start_index_map={0},
-      index_vector_dim=1,
-      slice_sizes={1, 3}
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  GatherExpander pass(GatherExpander::kEliminateSimpleGathers);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
-  ASSERT_FALSE(changed);
-}
-
-TEST_F(GatherExpanderTest, EliminateSimpleGathersRewritesTrivialGather) {
-  const string hlo_text = R"(
-HloModule test
-
-ENTRY main {
-  operand = s32[100] parameter(0)
-  indices = s32[1] parameter(1)
-  ROOT gather = s32[10] gather(operand, indices),
-      offset_dims={0},
-      collapsed_slice_dims={},
-      start_index_map={0},
-      index_vector_dim=0,
-      slice_sizes={10}
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(hlo_text));
-  GatherExpander pass(GatherExpander::kEliminateAllGathers);
-  TF_ASSERT_OK_AND_ASSIGN(bool changed, RunHloPass(&pass, module.get()));
-  ASSERT_TRUE(changed);
-  ASSERT_FALSE(hlo_query::ContainsInstrWithOpcode(module->entry_computation(),
-                                                  {HloOpcode::kGather}));
-}
-
 }  // namespace
 }  // namespace xla

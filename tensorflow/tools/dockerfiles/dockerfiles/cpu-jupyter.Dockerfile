@@ -1,4 +1,4 @@
-# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,63 +16,54 @@
 # THIS IS A GENERATED DOCKERFILE.
 #
 # This file was assembled from multiple pieces, whose use is documented
-# throughout. Please refer to the TensorFlow dockerfiles documentation
-# for more information.
+# below. Please refer to the the TensorFlow dockerfiles documentation for
+# more information. Build args are documented as their default value.
+#
+# Ubuntu-based, CPU-only environment for using TensorFlow, with Jupyter included.
+#
+# Start from Ubuntu (no GPU support)
+# --build-arg UBUNTU_VERSION=16.04
+#    ( no description )
+#
+# Python is required for TensorFlow and other libraries.
+# --build-arg USE_PYTHON_3_NOT_2=True
+#    Install python 3 over Python 2
+#
+# Install the TensorFlow Python package.
+# --build-arg TF_PACKAGE=tensorflow (tensorflow|tensorflow-gpu|tf-nightly|tf-nightly-gpu)
+#    The specific TensorFlow Python package to install
+#
+# Configure TensorFlow's shell prompt and login tools.
+#
+# Launch Jupyter on execution instead of a bash prompt.
 
-ARG UBUNTU_VERSION=18.04
+ARG UBUNTU_VERSION=16.04
+FROM ubuntu:${UBUNTU_VERSION}
 
-FROM ubuntu:${UBUNTU_VERSION} as base
-
-RUN apt-get update && apt-get install -y curl
-
-# See http://bugs.python.org/issue19846
-ENV LANG C.UTF-8
+ARG USE_PYTHON_3_NOT_2=True
+ARG _PY_SUFFIX=${USE_PYTHON_3_NOT_2:+3}
+ARG PYTHON=python${_PY_SUFFIX}
+ARG PIP=pip${_PY_SUFFIX}
 
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip
+    ${PYTHON} \
+    ${PYTHON}-pip
 
-RUN python3 -m pip --no-cache-dir install --upgrade \
-    "pip<20.3" \
+RUN ${PIP} install --upgrade \
+    pip \
     setuptools
 
-# Some TF tools expect a "python" binary
-RUN ln -s $(which python3) /usr/local/bin/python
-
-# Options:
-#   tensorflow
-#   tensorflow-gpu
-#   tf-nightly
-#   tf-nightly-gpu
-# Set --build-arg TF_PACKAGE_VERSION=1.11.0rc0 to install a specific version.
-# Installs the latest version by default.
 ARG TF_PACKAGE=tensorflow
-ARG TF_PACKAGE_VERSION=
-RUN python3 -m pip install --no-cache-dir ${TF_PACKAGE}${TF_PACKAGE_VERSION:+==${TF_PACKAGE_VERSION}}
+RUN ${PIP} install ${TF_PACKAGE}
 
 COPY bashrc /etc/bash.bashrc
 RUN chmod a+rwx /etc/bash.bashrc
 
-RUN python3 -m pip install --no-cache-dir jupyter matplotlib
-# Pin ipykernel and nbformat; see https://github.com/ipython/ipykernel/issues/422
-RUN python3 -m pip install --no-cache-dir jupyter_http_over_ws ipykernel==5.1.1 nbformat==4.4.0
-RUN jupyter serverextension enable --py jupyter_http_over_ws
+RUN ${PIP} install jupyter
 
-RUN mkdir -p /tf/tensorflow-tutorials && chmod -R a+rwx /tf/
+RUN mkdir /notebooks && chmod a+rwx /notebooks
 RUN mkdir /.local && chmod a+rwx /.local
-RUN apt-get update && apt-get install -y --no-install-recommends wget git
-WORKDIR /tf/tensorflow-tutorials
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/classification.ipynb
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/overfit_and_underfit.ipynb
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/regression.ipynb
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/save_and_load.ipynb
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/text_classification.ipynb
-RUN wget https://raw.githubusercontent.com/tensorflow/docs/master/site/en/tutorials/keras/text_classification_with_hub.ipynb
-COPY readme-for-jupyter.md README.md
-RUN apt-get autoremove -y && apt-get remove -y wget
-WORKDIR /tf
+WORKDIR /notebooks
 EXPOSE 8888
 
-RUN python3 -m ipykernel.kernelspec
-
-CMD ["bash", "-c", "source /etc/bash.bashrc && jupyter notebook --notebook-dir=/tf --ip 0.0.0.0 --no-browser --allow-root"]
+CMD ["bash", "-c", "source /etc/bash.bashrc && jupyter notebook --notebook-dir=/notebooks --ip 0.0.0.0 --no-browser --allow-root"]

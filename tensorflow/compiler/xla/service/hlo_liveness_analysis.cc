@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <deque>
 
-#include "absl/container/flat_hash_set.h"
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/xla/map_util.h"
@@ -37,11 +36,11 @@ namespace xla {
 namespace {
 
 using Worklist = std::deque<const HloInstruction*>;
-using Workset = absl::flat_hash_set<const HloInstruction*>;
+using Workset = std::unordered_set<const HloInstruction*>;
 
 void AddToWorklist(const HloInstruction* instruction, Worklist* worklist,
                    Workset* workset) {
-  if (!workset->contains(instruction)) {
+  if (workset->count(instruction) == 0) {
     worklist->push_back(instruction);
     workset->insert(instruction);
     VLOG(3) << "ADD instruction: " << instruction->name();
@@ -113,7 +112,7 @@ void MarkLiveAtAllIndices(const HloInstruction* instruction,
 // Propagates liveness through Tuple instructions.
 // *) For each tuple operand:
 //   *) For tuple output shape index associated with operand:
-//     *) Propagate live shape indices to tuple operand at the associated
+//     *) Propgate live shape indices to tuple operand at the associated
 //        shape index in the operands output, and add to worklist.
 void PropagateLivenessThroughTuple(
     const HloInstruction* instruction,
@@ -260,7 +259,7 @@ HloLivenessAnalysis::HloLivenessAnalysis(const HloModule& module)
 void HloLivenessAnalysis::RunAnalysis() {
   Worklist worklist;
   Workset workset;
-  // Add entry computation root instruction.
+  // Add entry compuation root instruction.
   MarkLiveAtAllIndices(module_.entry_computation()->root_instruction(),
                        &live_index_map_, &worklist, &workset);
   for (auto* computation : module_.computations()) {

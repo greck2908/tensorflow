@@ -76,8 +76,7 @@ class TensorResponse {
 
   // Initialize tensor metadata from response and allocate
   // uninitialized backing storage for actual contents.
-  void InitPartial(const RecvTensorResponse& response,
-                   const AllocationAttributes& allocation_attr);
+  void InitPartial(const RecvTensorResponse& response);
 
   // Return a reference to the parsed tensor.  The tensor will remain
   // live only until *this is destroyed or modified.

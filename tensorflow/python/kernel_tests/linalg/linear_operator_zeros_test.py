@@ -20,9 +20,7 @@ from __future__ import print_function
 import numpy as np
 
 from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import variables as variables_module
 from tensorflow.python.ops.linalg import linalg as linalg_lib
 from tensorflow.python.ops.linalg import linear_operator_test_util
 from tensorflow.python.platform import test
@@ -31,35 +29,24 @@ from tensorflow.python.platform import test
 rng = np.random.RandomState(2016)
 
 
-@test_util.run_all_in_graph_and_eager_modes
 class LinearOperatorZerosTest(
     linear_operator_test_util.SquareLinearOperatorDerivedClassTest):
   """Most tests done in the base class LinearOperatorDerivedClassTest."""
 
-  @staticmethod
-  def skip_these_tests():
-    return [
-        "cholesky",
-        "cond",
-        "inverse",
-        "log_abs_det",
-        "solve",
-        "solve_with_broadcast"
-    ]
+  @property
+  def _tests_to_skip(self):
+    return ["log_abs_det", "solve", "solve_with_broadcast"]
 
-  @staticmethod
-  def operator_shapes_infos():
-    shapes_info = linear_operator_test_util.OperatorShapesInfo
+  @property
+  def _operator_build_infos(self):
+    build_info = linear_operator_test_util.OperatorBuildInfo
     return [
-        shapes_info((1, 1)),
-        shapes_info((1, 3, 3)),
-        shapes_info((3, 4, 4)),
-        shapes_info((2, 1, 4, 4))]
+        build_info((1, 1)),
+        build_info((1, 3, 3)),
+        build_info((3, 4, 4)),
+        build_info((2, 1, 4, 4))]
 
-  def operator_and_matrix(
-      self, build_info, dtype, use_placeholder,
-      ensure_self_adjoint_and_pd=False):
-    del ensure_self_adjoint_and_pd
+  def _operator_and_matrix(self, build_info, dtype, use_placeholder):
     del use_placeholder
     shape = list(build_info.shape)
     assert shape[-1] == shape[-2]
@@ -86,85 +73,91 @@ class LinearOperatorZerosTest(
   def test_assert_self_adjoint(self):
     with self.cached_session():
       operator = linalg_lib.LinearOperatorZeros(num_rows=2)
-      self.evaluate(operator.assert_self_adjoint())  # Should not fail
+      operator.assert_self_adjoint().run()  # Should not fail
 
   def test_non_scalar_num_rows_raises_static(self):
-    with self.assertRaisesRegex(ValueError, "must be a 0-D Tensor"):
+    with self.assertRaisesRegexp(ValueError, "must be a 0-D Tensor"):
       linalg_lib.LinearOperatorZeros(num_rows=[2])
-    with self.assertRaisesRegex(ValueError, "must be a 0-D Tensor"):
+    with self.assertRaisesRegexp(ValueError, "must be a 0-D Tensor"):
       linalg_lib.LinearOperatorZeros(num_rows=2, num_columns=[2])
 
   def test_non_integer_num_rows_raises_static(self):
-    with self.assertRaisesRegex(TypeError, "must be integer"):
+    with self.assertRaisesRegexp(TypeError, "must be integer"):
       linalg_lib.LinearOperatorZeros(num_rows=2.)
-    with self.assertRaisesRegex(TypeError, "must be integer"):
+    with self.assertRaisesRegexp(TypeError, "must be integer"):
       linalg_lib.LinearOperatorZeros(num_rows=2, num_columns=2.)
 
   def test_negative_num_rows_raises_static(self):
-    with self.assertRaisesRegex(ValueError, "must be non-negative"):
+    with self.assertRaisesRegexp(ValueError, "must be non-negative"):
       linalg_lib.LinearOperatorZeros(num_rows=-2)
-    with self.assertRaisesRegex(ValueError, "must be non-negative"):
+    with self.assertRaisesRegexp(ValueError, "must be non-negative"):
       linalg_lib.LinearOperatorZeros(num_rows=2, num_columns=-2)
 
   def test_non_1d_batch_shape_raises_static(self):
-    with self.assertRaisesRegex(ValueError, "must be a 1-D"):
+    with self.assertRaisesRegexp(ValueError, "must be a 1-D"):
       linalg_lib.LinearOperatorZeros(num_rows=2, batch_shape=2)
 
   def test_non_integer_batch_shape_raises_static(self):
-    with self.assertRaisesRegex(TypeError, "must be integer"):
+    with self.assertRaisesRegexp(TypeError, "must be integer"):
       linalg_lib.LinearOperatorZeros(num_rows=2, batch_shape=[2.])
 
   def test_negative_batch_shape_raises_static(self):
-    with self.assertRaisesRegex(ValueError, "must be non-negative"):
+    with self.assertRaisesRegexp(ValueError, "must be non-negative"):
       linalg_lib.LinearOperatorZeros(num_rows=2, batch_shape=[-2])
 
   def test_non_scalar_num_rows_raises_dynamic(self):
     with self.cached_session():
-      num_rows = array_ops.placeholder_with_default([2], shape=None)
-      with self.assertRaisesError("must be a 0-D Tensor"):
-        operator = linalg_lib.LinearOperatorZeros(
-            num_rows, assert_proper_shapes=True)
-        self.evaluate(operator.to_dense())
+      num_rows = array_ops.placeholder(dtypes.int32)
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows, assert_proper_shapes=True)
+      with self.assertRaisesOpError("must be a 0-D Tensor"):
+        operator.to_dense().eval(feed_dict={num_rows: [2]})
 
   def test_negative_num_rows_raises_dynamic(self):
     with self.cached_session():
-      n = array_ops.placeholder_with_default(-2, shape=None)
-      with self.assertRaisesError("must be non-negative"):
-        operator = linalg_lib.LinearOperatorZeros(
-            num_rows=n, assert_proper_shapes=True)
-        self.evaluate(operator.to_dense())
+      n = array_ops.placeholder(dtypes.int32)
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows=n, assert_proper_shapes=True)
+      with self.assertRaisesOpError("must be non-negative"):
+        operator.to_dense().eval(feed_dict={n: -2})
+
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows=2, num_columns=n, assert_proper_shapes=True)
+      with self.assertRaisesOpError("must be non-negative"):
+        operator.to_dense().eval(feed_dict={n: -2})
 
   def test_non_1d_batch_shape_raises_dynamic(self):
     with self.cached_session():
-      batch_shape = array_ops.placeholder_with_default(2, shape=None)
-      with self.assertRaisesError("must be a 1-D"):
-        operator = linalg_lib.LinearOperatorZeros(
-            num_rows=2, batch_shape=batch_shape, assert_proper_shapes=True)
-        self.evaluate(operator.to_dense())
+      batch_shape = array_ops.placeholder(dtypes.int32)
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows=2, batch_shape=batch_shape, assert_proper_shapes=True)
+      with self.assertRaisesOpError("must be a 1-D"):
+        operator.to_dense().eval(feed_dict={batch_shape: 2})
 
   def test_negative_batch_shape_raises_dynamic(self):
     with self.cached_session():
-      batch_shape = array_ops.placeholder_with_default([-2], shape=None)
-      with self.assertRaisesError("must be non-negative"):
-        operator = linalg_lib.LinearOperatorZeros(
-            num_rows=2, batch_shape=batch_shape, assert_proper_shapes=True)
-        self.evaluate(operator.to_dense())
+      batch_shape = array_ops.placeholder(dtypes.int32)
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows=2, batch_shape=batch_shape, assert_proper_shapes=True)
+      with self.assertRaisesOpError("must be non-negative"):
+        operator.to_dense().eval(feed_dict={batch_shape: [-2]})
 
   def test_wrong_matrix_dimensions_raises_static(self):
     operator = linalg_lib.LinearOperatorZeros(num_rows=2)
     x = rng.randn(3, 3).astype(np.float32)
-    with self.assertRaisesRegex(ValueError, "Dimensions.*not compatible"):
+    with self.assertRaisesRegexp(ValueError, "Dimensions.*not compatible"):
       operator.matmul(x)
 
   def test_wrong_matrix_dimensions_raises_dynamic(self):
-    num_rows = array_ops.placeholder_with_default(2, shape=None)
-    x = array_ops.placeholder_with_default(rng.rand(3, 3), shape=None)
+    num_rows = array_ops.placeholder(dtypes.int32)
+    x = array_ops.placeholder(dtypes.float32)
 
     with self.cached_session():
-      with self.assertRaisesError("Dimensions.*not.compatible"):
-        operator = linalg_lib.LinearOperatorZeros(
-            num_rows, assert_proper_shapes=True, dtype=dtypes.float64)
-        self.evaluate(operator.matmul(x))
+      operator = linalg_lib.LinearOperatorZeros(
+          num_rows, assert_proper_shapes=True)
+      y = operator.matmul(x)
+      with self.assertRaisesOpError("Incompatible.*dimensions"):
+        y.eval(feed_dict={num_rows: 2, x: rng.rand(3, 3)})
 
   def test_is_x_flags(self):
     # The is_x flags are by default all True.
@@ -173,39 +166,12 @@ class LinearOperatorZerosTest(
     self.assertFalse(operator.is_non_singular)
     self.assertTrue(operator.is_self_adjoint)
 
-  def test_zeros_matmul(self):
-    operator1 = linalg_lib.LinearOperatorIdentity(num_rows=2)
-    operator2 = linalg_lib.LinearOperatorZeros(num_rows=2)
-    self.assertTrue(isinstance(
-        operator1.matmul(operator2),
-        linalg_lib.LinearOperatorZeros))
 
-    self.assertTrue(isinstance(
-        operator2.matmul(operator1),
-        linalg_lib.LinearOperatorZeros))
-
-  def test_ref_type_shape_args_raises(self):
-    with self.assertRaisesRegex(TypeError, "num_rows.cannot.be.reference"):
-      linalg_lib.LinearOperatorZeros(num_rows=variables_module.Variable(2))
-
-    with self.assertRaisesRegex(TypeError, "num_columns.cannot.be.reference"):
-      linalg_lib.LinearOperatorZeros(
-          num_rows=2, num_columns=variables_module.Variable(3))
-
-    with self.assertRaisesRegex(TypeError, "batch_shape.cannot.be.reference"):
-      linalg_lib.LinearOperatorZeros(
-          num_rows=2, batch_shape=variables_module.Variable([2]))
-
-
-@test_util.run_all_in_graph_and_eager_modes
 class LinearOperatorZerosNotSquareTest(
     linear_operator_test_util.NonSquareLinearOperatorDerivedClassTest):
 
-  def operator_and_matrix(
-      self, build_info, dtype, use_placeholder,
-      ensure_self_adjoint_and_pd=False):
+  def _operator_and_matrix(self, build_info, dtype, use_placeholder):
     del use_placeholder
-    del ensure_self_adjoint_and_pd
     shape = list(build_info.shape)
 
     batch_shape = shape[:-2]
@@ -221,6 +187,4 @@ class LinearOperatorZerosNotSquareTest(
 
 
 if __name__ == "__main__":
-  linear_operator_test_util.add_tests(LinearOperatorZerosTest)
-  linear_operator_test_util.add_tests(LinearOperatorZerosNotSquareTest)
   test.main()

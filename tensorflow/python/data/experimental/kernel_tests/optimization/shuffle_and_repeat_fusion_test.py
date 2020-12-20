@@ -17,39 +17,32 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl.testing import parameterized
-
-from tensorflow.python.data.experimental.ops import testing
+from tensorflow.python.data.experimental.ops import optimization
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
 from tensorflow.python.framework import errors
 from tensorflow.python.platform import test
 
 
-class ShuffleAndRepeatFusionTest(test_base.DatasetTestBase,
-                                 parameterized.TestCase):
+class ShuffleAndRepeatFusionTest(test_base.DatasetTestBase):
 
-  @combinations.generate(test_base.default_test_combinations())
   def testShuffleAndRepeatFusion(self):
-    expected = "ShuffleAndRepeat"
     dataset = dataset_ops.Dataset.range(10).apply(
-        testing.assert_next([expected])).shuffle(10).repeat(2)
+        optimization.assert_next(["ShuffleAndRepeat"])).shuffle(10).repeat(2)
     options = dataset_ops.Options()
-    options.experimental_optimization.apply_default_optimizations = False
-    options.experimental_optimization.shuffle_and_repeat_fusion = True
+    options.experimental_shuffle_and_repeat_fusion = True
     dataset = dataset.with_options(options)
-    get_next = self.getNext(dataset)
+    iterator = dataset.make_one_shot_iterator()
+    get_next = iterator.get_next()
 
-    for _ in range(2):
-      results = []
-      for _ in range(10):
-        results.append(self.evaluate(get_next()))
-      self.assertAllEqual([x for x in range(10)], sorted(results))
-    with self.assertRaises(errors.OutOfRangeError):
-      self.evaluate(get_next())
-    with self.assertRaises(errors.OutOfRangeError):
-      self.evaluate(get_next())
+    with self.cached_session() as sess:
+      for _ in range(2):
+        results = []
+        for _ in range(10):
+          results.append(sess.run(get_next))
+        self.assertAllEqual([x for x in range(10)], sorted(results))
+      with self.assertRaises(errors.OutOfRangeError):
+        sess.run(get_next)
 
 
 if __name__ == "__main__":

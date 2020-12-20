@@ -28,19 +28,19 @@
 # the Python binary path.
 #
 # This script obeys the following environment variables (if exists):
-#   TUT_TESTS_DENYLIST: Force skipping of specified tutorial tests listed
+#   TUT_TESTS_BLACKLIST: Force skipping of specified tutorial tests listed
 #                        in TUT_TESTS below.
 #
 
 # List of all tutorial tests to run, separated by spaces
-TUT_TESTS="mnist_with_summaries word2vec"
+TUT_TESTS="mnist_softmax mnist_with_summaries word2vec estimator_abalone"
 
-if [[ -z "${TUT_TESTS_DENYLIST}" ]]; then
-  TF_BUILD_TUT_TEST_DENYLIST=""
+if [[ -z "${TUT_TESTS_BLACKLIST}" ]]; then
+  TF_BUILD_TUT_TEST_BLACKLIST=""
 fi
 echo ""
 echo "=== Testing tutorials ==="
-echo "TF_BUILD_TUT_TEST_DENYLIST = \"${TF_BUILD_TUT_TEST_DENYLIST}\""
+echo "TF_BUILD_TUT_TEST_BLACKLIST = \"${TF_BUILD_TUT_TEST_BLACKLIST}\""
 
 # Timeout (in seconds) for each tutorial test
 TIMEOUT=1800
@@ -213,6 +213,16 @@ test_word2vec() {
 
 
 # -----------------------------------------------------------
+# Estimator: abalone
+test_estimator_abalone() {
+  LOG_FILE=$1
+
+  run_in_directory "${TEST_DIR}" "${LOG_FILE}" \
+    "tensorflow/examples/tutorials/estimators/abalone.py"
+}
+
+
+# -----------------------------------------------------------
 # ptb_word_lm
 test_ptb_word_lm() {
   LOG_FILE=$1
@@ -269,4 +279,4 @@ test_ptb_word_lm() {
 
 # Run the tutorial tests
 test_runner "tutorial test-on-install" \
-    "${TUT_TESTS}" "${TF_BUILD_TUT_TEST_DENYLIST}" "${LOGS_DIR}"
+    "${TUT_TESTS}" "${TF_BUILD_TUT_TEST_BLACKLIST}" "${LOGS_DIR}"

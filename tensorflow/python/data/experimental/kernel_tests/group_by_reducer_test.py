@@ -17,13 +17,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl.testing import parameterized
 import numpy as np
 
 from tensorflow.python.data.experimental.ops import grouping
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -34,9 +32,18 @@ from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import test
 
 
-class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
+class GroupByReducerTest(test_base.DatasetTestBase):
 
-  @combinations.generate(test_base.default_test_combinations())
+  def checkResults(self, dataset, shapes, values):
+    self.assertEqual(shapes, dataset.output_shapes)
+    get_next = dataset.make_one_shot_iterator().get_next()
+    with self.cached_session() as sess:
+      for expected in values:
+        got = sess.run(get_next)
+        self.assertEqual(got, expected)
+      with self.assertRaises(errors.OutOfRangeError):
+        sess.run(get_next)
+
   def testSum(self):
     reducer = grouping.Reducer(
         init_func=lambda _: np.int64(0),
@@ -45,12 +52,9 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
     for i in range(1, 11):
       dataset = dataset_ops.Dataset.range(2 * i).apply(
           grouping.group_by_reducer(lambda x: x % 2, reducer))
-      self.assertDatasetProduces(
-          dataset,
-          expected_shapes=tensor_shape.TensorShape([]),
-          expected_output=[(i - 1) * i, i * i])
+      self.checkResults(
+          dataset, shapes=tensor_shape.scalar(), values=[(i - 1) * i, i * i])
 
-  @combinations.generate(test_base.default_test_combinations())
   def testAverage(self):
 
     def reduce_fn(x, y):
@@ -65,12 +69,9 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
       dataset = dataset_ops.Dataset.range(2 * i).apply(
           grouping.group_by_reducer(
               lambda x: math_ops.cast(x, dtypes.int64) % 2, reducer))
-      self.assertDatasetProduces(
-          dataset,
-          expected_shapes=tensor_shape.TensorShape([]),
-          expected_output=[i - 1, i])
+      self.checkResults(
+          dataset, shapes=tensor_shape.scalar(), values=[i - 1, i])
 
-  @combinations.generate(test_base.default_test_combinations())
   def testConcat(self):
     components = np.array(list("abcdefghijklmnopqrst")).view(np.chararray)
     reducer = grouping.Reducer(
@@ -82,12 +83,11 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
           (dataset_ops.Dataset.from_tensor_slices(components),
            dataset_ops.Dataset.range(2 * i))).apply(
                grouping.group_by_reducer(lambda x, y: y % 2, reducer))
-      self.assertDatasetProduces(
+      self.checkResults(
           dataset,
-          expected_shapes=tensor_shape.TensorShape([]),
-          expected_output=[b"acegikmoqs"[:i], b"bdfhjlnprt"[:i]])
+          shapes=tensor_shape.scalar(),
+          values=[b"acegikmoqs" [:i], b"bdfhjlnprt" [:i]])
 
-  @combinations.generate(test_base.default_test_combinations())
   def testSparseSum(self):
     def _sparse(i):
       return sparse_tensor.SparseTensorValue(
@@ -102,12 +102,9 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
     for i in range(1, 11):
       dataset = dataset_ops.Dataset.range(2 * i).map(_sparse).apply(
           grouping.group_by_reducer(lambda x: x.values[0] % 2, reducer))
-      self.assertDatasetProduces(
-          dataset,
-          expected_shapes=tensor_shape.TensorShape([]),
-          expected_output=[(i - 1) * i, i * i])
+      self.checkResults(
+          dataset, shapes=tensor_shape.scalar(), values=[(i - 1) * i, i * i])
 
-  @combinations.generate(test_base.default_test_combinations())
   def testChangingStateShape(self):
 
     def reduce_fn(x, _):
@@ -125,17 +122,17 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
     for i in range(1, 11):
       dataset = dataset_ops.Dataset.from_tensors(np.int64(0)).repeat(i).apply(
           grouping.group_by_reducer(lambda x: x, reducer))
-      dataset_output_shapes = dataset_ops.get_legacy_output_shapes(dataset)
-      self.assertEqual([None], dataset_output_shapes[0].as_list())
-      self.assertIs(None, dataset_output_shapes[1].ndims)
-      get_next = self.getNext(dataset)
-      x, y = self.evaluate(get_next())
-      self.assertAllEqual([0] * (2**i), x)
-      self.assertAllEqual(np.array(1, ndmin=i), y)
-      with self.assertRaises(errors.OutOfRangeError):
-        self.evaluate(get_next())
+      self.assertEqual([None], dataset.output_shapes[0].as_list())
+      self.assertIs(None, dataset.output_shapes[1].ndims)
+      iterator = dataset.make_one_shot_iterator()
+      get_next = iterator.get_next()
+      with self.cached_session() as sess:
+        x, y = sess.run(get_next)
+        self.assertAllEqual([0] * (2**i), x)
+        self.assertAllEqual(np.array(1, ndmin=i), y)
+        with self.assertRaises(errors.OutOfRangeError):
+          sess.run(get_next)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testTypeMismatch(self):
     reducer = grouping.Reducer(
         init_func=lambda x: constant_op.constant(1, dtype=dtypes.int32),
@@ -143,14 +140,13 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
         finalize_func=lambda x: x)
 
     dataset = dataset_ops.Dataset.range(10)
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         TypeError,
         "The element types for the new state must match the initial state."):
       dataset.apply(
           grouping.group_by_reducer(lambda _: np.int64(0), reducer))
 
   # TODO(b/78665031): Remove once non-scalar keys are supported.
-  @combinations.generate(test_base.default_test_combinations())
   def testInvalidKeyShape(self):
     reducer = grouping.Reducer(
         init_func=lambda x: np.int64(0),
@@ -158,13 +154,12 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
         finalize_func=lambda x: x)
 
     dataset = dataset_ops.Dataset.range(10)
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError, "`key_func` must return a single tf.int64 tensor."):
       dataset.apply(
           grouping.group_by_reducer(lambda _: np.int64((0, 0)), reducer))
 
   # TODO(b/78665031): Remove once non-int64 keys are supported.
-  @combinations.generate(test_base.default_test_combinations())
   def testInvalidKeyType(self):
     reducer = grouping.Reducer(
         init_func=lambda x: np.int64(0),
@@ -172,12 +167,11 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
         finalize_func=lambda x: x)
 
     dataset = dataset_ops.Dataset.range(10)
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError, "`key_func` must return a single tf.int64 tensor."):
       dataset.apply(
           grouping.group_by_reducer(lambda _: "wrong", reducer))
 
-  @combinations.generate(test_base.default_test_combinations())
   def testTuple(self):
     def init_fn(_):
       return np.array([], dtype=np.int64), np.int64(0)
@@ -194,10 +188,11 @@ class GroupByReducerTest(test_base.DatasetTestBase, parameterized.TestCase):
     dataset = dataset_ops.Dataset.zip(
         (dataset_ops.Dataset.range(10), dataset_ops.Dataset.range(10))).apply(
             grouping.group_by_reducer(lambda x, y: np.int64(0), reducer))
-    get_next = self.getNext(dataset)
-    x, y = self.evaluate(get_next())
-    self.assertAllEqual(x, np.asarray([x for x in range(10)]))
-    self.assertEqual(y, 45)
+    get_next = dataset.make_one_shot_iterator().get_next()
+    with self.cached_session() as sess:
+      x, y = sess.run(get_next)
+      self.assertAllEqual(x, np.asarray([x for x in range(10)]))
+      self.assertEqual(y, 45)
 
 
 if __name__ == "__main__":

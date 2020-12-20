@@ -26,7 +26,6 @@ from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors_impl
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import data_flow_ops
 from tensorflow.python.ops import variables
@@ -39,7 +38,6 @@ from tensorflow.python.training import queue_runner_impl
 _MockOp = collections.namedtuple("MockOp", ["name"])
 
 
-@test_util.run_v1_only("QueueRunner removed from v2")
 class QueueRunnerTest(test.TestCase):
 
   def testBasic(self):
@@ -49,7 +47,7 @@ class QueueRunnerTest(test.TestCase):
       var = variables.VariableV1(zero64)
       count_up_to = var.count_up_to(3)
       queue = data_flow_ops.FIFOQueue(10, dtypes.float32)
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       qr = queue_runner_impl.QueueRunner(queue, [count_up_to])
       threads = qr.create_threads(sess)
       self.assertEqual(sorted(t.name for t in threads),
@@ -60,7 +58,7 @@ class QueueRunnerTest(test.TestCase):
         t.join()
       self.assertEqual(0, len(qr.exceptions_raised))
       # The variable should be 3.
-      self.assertEqual(3, self.evaluate(var))
+      self.assertEqual(3, var.eval())
 
   def testTwoOps(self):
     with self.cached_session() as sess:
@@ -76,14 +74,14 @@ class QueueRunnerTest(test.TestCase):
       self.assertEqual(sorted(t.name for t in threads),
                        ["QueueRunnerThread-fifo_queue-CountUpTo:0",
                         "QueueRunnerThread-fifo_queue-CountUpTo_1:0"])
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       for t in threads:
         t.start()
       for t in threads:
         t.join()
       self.assertEqual(0, len(qr.exceptions_raised))
-      self.assertEqual(3, self.evaluate(var0))
-      self.assertEqual(30, self.evaluate(var1))
+      self.assertEqual(3, var0.eval())
+      self.assertEqual(30, var1.eval())
 
   def testExceptionsCaptured(self):
     with self.cached_session() as sess:
@@ -91,7 +89,7 @@ class QueueRunnerTest(test.TestCase):
       qr = queue_runner_impl.QueueRunner(queue, [_MockOp("i fail"),
                                                  _MockOp("so fail")])
       threads = qr.create_threads(sess)
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       for t in threads:
         t.start()
       for t in threads:
@@ -123,11 +121,11 @@ class QueueRunnerTest(test.TestCase):
       # It should have terminated cleanly.
       self.assertEqual(0, len(qr.exceptions_raised))
       # The 2 values should be in queue1.
-      self.assertEqual(10.0, self.evaluate(dequeue1))
-      self.assertEqual(10.0, self.evaluate(dequeue1))
+      self.assertEqual(10.0, dequeue1.eval())
+      self.assertEqual(10.0, dequeue1.eval())
       # And queue1 should now be closed.
-      with self.assertRaisesRegex(errors_impl.OutOfRangeError, "is closed"):
-        self.evaluate(dequeue1)
+      with self.assertRaisesRegexp(errors_impl.OutOfRangeError, "is closed"):
+        dequeue1.eval()
 
   def testRespectCoordShouldStop(self):
     with self.cached_session() as sess:
@@ -136,7 +134,7 @@ class QueueRunnerTest(test.TestCase):
       var = variables.VariableV1(zero64)
       count_up_to = var.count_up_to(3)
       queue = data_flow_ops.FIFOQueue(10, dtypes.float32)
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       qr = queue_runner_impl.QueueRunner(queue, [count_up_to])
       # As the coordinator to stop.  The queue runner should
       # finish immediately.
@@ -151,7 +149,7 @@ class QueueRunnerTest(test.TestCase):
       coord.join()
       self.assertEqual(0, len(qr.exceptions_raised))
       # The variable should be 0.
-      self.assertEqual(0, self.evaluate(var))
+      self.assertEqual(0, var.eval())
 
   def testRequestStopOnException(self):
     with self.cached_session() as sess:
@@ -162,7 +160,7 @@ class QueueRunnerTest(test.TestCase):
       for t in threads:
         t.start()
       # The exception should be re-raised when joining.
-      with self.assertRaisesRegex(ValueError, "Operation not in the graph"):
+      with self.assertRaisesRegexp(ValueError, "Operation not in the graph"):
         coord.join()
 
   def testGracePeriod(self):
@@ -189,7 +187,7 @@ class QueueRunnerTest(test.TestCase):
         var = variables.VariableV1(zero64)
         count_up_to = var.count_up_to(3)
         queue = data_flow_ops.FIFOQueue(10, dtypes.float32)
-        self.evaluate(variables.global_variables_initializer())
+        variables.global_variables_initializer().run()
         coord = coordinator.Coordinator()
         qr = queue_runner_impl.QueueRunner(queue, [count_up_to])
         # NOTE that this test does not actually start the threads.
@@ -204,7 +202,7 @@ class QueueRunnerTest(test.TestCase):
       var = variables.VariableV1(zero64)
       count_up_to = var.count_up_to(3)
       queue = data_flow_ops.FIFOQueue(10, dtypes.float32)
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       coord = coordinator.Coordinator()
       qr = queue_runner_impl.QueueRunner(queue, [count_up_to])
       threads = []
@@ -220,7 +218,7 @@ class QueueRunnerTest(test.TestCase):
       var = variables.VariableV1(zero64)
       count_up_to = var.count_up_to(3)
       queue = data_flow_ops.FIFOQueue(10, dtypes.float32)
-      self.evaluate(variables.global_variables_initializer())
+      variables.global_variables_initializer().run()
       qr = queue_runner_impl.QueueRunner(queue, [count_up_to,
                                                  _MockOp("bad_op")])
       threads = qr.create_threads(sess, start=True)
@@ -265,7 +263,7 @@ class QueueRunnerTest(test.TestCase):
         t.join()
       self.assertEqual(0, len(qr.exceptions_raised))
       # The variable should be 3.
-      self.assertEqual(3, self.evaluate(var))
+      self.assertEqual(3, var.eval())
 
   def testStartQueueRunnersRaisesIfNotASession(self):
     zero64 = constant_op.constant(0, dtype=dtypes.int64)
@@ -277,7 +275,7 @@ class QueueRunnerTest(test.TestCase):
     queue_runner_impl.add_queue_runner(qr)
     with self.cached_session():
       init_op.run()
-      with self.assertRaisesRegex(TypeError, "tf.Session"):
+      with self.assertRaisesRegexp(TypeError, "tf.Session"):
         queue_runner_impl.start_queue_runners("NotASession")
 
   def testStartQueueRunnersIgnoresMonitoredSession(self):
@@ -312,7 +310,7 @@ class QueueRunnerTest(test.TestCase):
         t.join()
       self.assertEqual(0, len(qr.exceptions_raised))
       # The variable should be 3.
-      self.assertEqual(3, self.evaluate(var))
+      self.assertEqual(3, var.eval())
 
   def testQueueRunnerSerializationRoundTrip(self):
     graph = ops.Graph()

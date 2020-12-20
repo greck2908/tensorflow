@@ -62,16 +62,6 @@ class StringDest : public WritableFile {
     contents_->append(slice.data(), slice.size());
     return Status::OK();
   }
-#if defined(TF_CORD_SUPPORT)
-  Status Append(const absl::Cord& data) override {
-    contents_->append(std::string(data));
-    return Status::OK();
-  }
-#endif
-  Status Tell(int64* pos) override {
-    *pos = contents_->size();
-    return Status::OK();
-  }
 
  private:
   string* contents_;
@@ -136,20 +126,13 @@ class RecordioTest : public ::testing::Test {
     TF_ASSERT_OK(writer_->WriteRecord(StringPiece(msg)));
   }
 
-#if defined(TF_CORD_SUPPORT)
-  void Write(const absl::Cord& msg) {
-    ASSERT_TRUE(!reading_) << "Write() after starting to read";
-    TF_ASSERT_OK(writer_->WriteRecord(msg));
-  }
-#endif
-
   size_t WrittenBytes() const { return contents_.size(); }
 
   string Read() {
     if (!reading_) {
       reading_ = true;
     }
-    tstring record;
+    string record;
     Status s = reader_->ReadRecord(&readpos_, &record);
     if (s.ok()) {
       return record;
@@ -183,7 +166,7 @@ class RecordioTest : public ::testing::Test {
     Write(BigString("x", 10000));
     reading_ = true;
     uint64 offset = WrittenBytes() + offset_past_end;
-    tstring record;
+    string record;
     Status s = reader_->ReadRecord(&offset, &record);
     ASSERT_TRUE(errors::IsOutOfRange(s)) << s;
   }
@@ -203,21 +186,6 @@ TEST_F(RecordioTest, ReadWrite) {
   ASSERT_EQ("EOF", Read());
   ASSERT_EQ("EOF", Read());  // Make sure reads at eof work
 }
-
-#if defined(TF_CORD_SUPPORT)
-TEST_F(RecordioTest, ReadWriteCords) {
-  Write(absl::Cord("foo"));
-  Write(absl::Cord("bar"));
-  Write(absl::Cord(""));
-  Write(absl::Cord("xxxx"));
-  ASSERT_EQ("foo", Read());
-  ASSERT_EQ("bar", Read());
-  ASSERT_EQ("", Read());
-  ASSERT_EQ("xxxx", Read());
-  ASSERT_EQ("EOF", Read());
-  ASSERT_EQ("EOF", Read());  // Make sure reads at eof work
-}
-#endif
 
 TEST_F(RecordioTest, ManyRecords) {
   for (int i = 0; i < 100000; i++) {
@@ -261,7 +229,7 @@ void TestNonSequentialReads(const RecordWriterOptions& writer_options,
   StringSource file(&contents);
   RecordReader reader(&file, reader_options);
 
-  tstring record;
+  string record;
   // First read sequentially to fill in the offsets table.
   uint64 offsets[10] = {0};
   uint64 offset = 0;
@@ -300,7 +268,7 @@ TEST_F(RecordioTest, NonSequentialReadsWithCompression) {
 
 // Tests of all the error paths in log_reader.cc follow:
 void AssertHasSubstr(StringPiece s, StringPiece expected) {
-  EXPECT_TRUE(absl::StrContains(s, expected))
+  EXPECT_TRUE(str_util::StrContains(s, expected))
       << s << " does not contain " << expected;
 }
 
@@ -315,7 +283,7 @@ void TestReadError(const RecordWriterOptions& writer_options,
   RecordReader reader(&file, reader_options);
 
   uint64 offset = 0;
-  tstring read;
+  string read;
   file.force_error();
   Status status = reader.ReadRecord(&offset, &read);
   ASSERT_TRUE(errors::IsDataLoss(status));

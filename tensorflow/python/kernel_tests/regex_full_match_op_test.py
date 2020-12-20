@@ -20,9 +20,9 @@ from __future__ import print_function
 
 from absl.testing import parameterized
 
+from tensorflow.python.compat import compat
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import gen_string_ops
 from tensorflow.python.ops import string_ops
 from tensorflow.python.platform import test
@@ -33,7 +33,6 @@ from tensorflow.python.platform import test
     (gen_string_ops.static_regex_full_match))
 class RegexFullMatchOpVariantsTest(test.TestCase, parameterized.TestCase):
 
-  @test_util.run_deprecated_v1
   def testRegexFullMatch(self, op):
     values = ["abaaba", "abcdabcde"]
     with self.cached_session():
@@ -41,7 +40,6 @@ class RegexFullMatchOpVariantsTest(test.TestCase, parameterized.TestCase):
       matched = op(input_tensor, "a.*a").eval()
       self.assertAllEqual([True, False], matched)
 
-  @test_util.run_deprecated_v1
   def testRegexFullMatchTwoDims(self, op):
     values = [["abaaba", "abcdabcde"], ["acdcba", "ebcda"]]
     with self.cached_session():
@@ -49,7 +47,6 @@ class RegexFullMatchOpVariantsTest(test.TestCase, parameterized.TestCase):
       matched = op(input_tensor, "a.*a").eval()
       self.assertAllEqual([[True, False], [True, False]], matched)
 
-  @test_util.run_deprecated_v1
   def testEmptyMatch(self, op):
     values = ["abc", "1"]
     with self.cached_session():
@@ -57,7 +54,6 @@ class RegexFullMatchOpVariantsTest(test.TestCase, parameterized.TestCase):
       matched = op(input_tensor, "").eval()
       self.assertAllEqual([False, False], matched)
 
-  @test_util.run_deprecated_v1
   def testInvalidPattern(self, op):
     values = ["abc", "1"]
     with self.cached_session():
@@ -65,35 +61,34 @@ class RegexFullMatchOpVariantsTest(test.TestCase, parameterized.TestCase):
       invalid_pattern = "A["
       matched = op(input_tensor, invalid_pattern)
       with self.assertRaisesOpError("Invalid pattern"):
-        self.evaluate(matched)
+        matched.eval()
 
 
 class RegexFullMatchOpTest(test.TestCase):
 
-  @test_util.run_deprecated_v1
   def testRegexFullMatchDelegation(self):
-    with self.cached_session():
-      input_tensor = constant_op.constant("foo", dtypes.string)
-      pattern = "[a-z]"
-      op = string_ops.regex_full_match(input_tensor, pattern)
-      self.assertFalse(op.name.startswith("RegexFullMatch"), op.name)
+    with compat.forward_compatibility_horizon(2018, 11, 1):
+      with self.cached_session():
+        input_tensor = constant_op.constant("foo", dtypes.string)
+        pattern = "[a-z]"
+        op = string_ops.regex_full_match(input_tensor, pattern)
+        self.assertTrue(op.name.startswith("RegexFullMatch"), op.name)
 
-      pattern_tensor = constant_op.constant("[a-z]*", dtypes.string)
-      op_tensor = string_ops.regex_full_match(input_tensor, pattern_tensor)
-      self.assertTrue(op_tensor.name.startswith("RegexFullMatch"), op.name)
+        pattern_tensor = constant_op.constant("[a-z]*", dtypes.string)
+        op_tensor = string_ops.regex_full_match(input_tensor, pattern_tensor)
+        self.assertTrue(op_tensor.name.startswith("RegexFullMatch"), op.name)
 
-  @test_util.run_deprecated_v1
   def testStaticRegexFullMatchDelegation(self):
-    with self.cached_session():
-      input_tensor = constant_op.constant("foo", dtypes.string)
-      pattern = "[a-z]*"
-      op = string_ops.regex_full_match(input_tensor, pattern)
-      self.assertTrue(op.name.startswith("StaticRegexFullMatch"), op.name)
+    with compat.forward_compatibility_horizon(2018, 11, 20):
+      with self.cached_session():
+        input_tensor = constant_op.constant("foo", dtypes.string)
+        pattern = "[a-z]*"
+        op = string_ops.regex_full_match(input_tensor, pattern)
+        self.assertTrue(op.name.startswith("StaticRegexFullMatch"), op.name)
 
-      pattern_tensor = constant_op.constant("[a-z]*", dtypes.string)
-      op_vec = string_ops.regex_full_match(input_tensor, pattern_tensor)
-      self.assertTrue(op_vec.name.startswith("RegexFullMatch"), op.name)
-
+        pattern_tensor = constant_op.constant("[a-z]*", dtypes.string)
+        op_vec = string_ops.regex_full_match(input_tensor, pattern_tensor)
+        self.assertTrue(op_vec.name.startswith("RegexFullMatch"), op.name)
 
 if __name__ == "__main__":
   test.main()

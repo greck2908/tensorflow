@@ -1,4 +1,4 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+/* Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ static const HloInstruction& InstrForConstantBufferAllocation(
   CHECK(allocation.is_constant());
   HloInstruction* const_instr = nullptr;
   for (const auto& buffer_offset_pair : allocation.assigned_buffers()) {
-    const BufferValue* buffer = buffer_offset_pair.first;
+    const LogicalBuffer* buffer = buffer_offset_pair.first;
     // BufferAssignment may have assigned non-constant instructions to this
     // allocation too so we can't CHECK this condition.  E.g. for
     //
@@ -41,34 +41,15 @@ static const HloInstruction& InstrForConstantBufferAllocation(
   return *const_instr;
 }
 
-string SanitizeConstantName(const HloInstruction& instr) {
-  CHECK_EQ(instr.opcode(), HloOpcode::kConstant);
-  return SanitizeConstantName(instr.name());
-}
-
-string SanitizeConstantName(absl::string_view name) {
-  std::string instr_name(name);
+string ConstantBufferAllocationToGlobalName(
+    const BufferAllocation& allocation) {
+  string instr_name = InstrForConstantBufferAllocation(allocation).name();
   for (char& c : instr_name) {
-    // Having a hyphen or a dot in a global variable name can crash the LLVM PTX
-    // backend.
-    if (c == '.' || c == '-') {
+    if (c == '.') {
       c = '_';
     }
   }
-  return instr_name;
-}
-
-string ConstantHloToGlobalName(const HloInstruction& instr) {
-  string instr_name = instr.name();
-  // Check that names are sanitized and stored in the HLO instructions
-  // before constant buffer allocation.
-  DCHECK_EQ(instr_name, SanitizeConstantName(instr));
   return absl::StrCat("buffer_for_", instr_name);
-}
-
-string ConstantBufferAllocationToGlobalName(
-    const BufferAllocation& allocation) {
-  return ConstantHloToGlobalName(InstrForConstantBufferAllocation(allocation));
 }
 
 const Literal& LiteralForConstantAllocation(

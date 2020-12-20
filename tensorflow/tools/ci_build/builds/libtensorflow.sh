@@ -51,14 +51,10 @@ function build_libtensorflow_tarball() {
   rm -rf ${DIR}
 
   TARBALL_SUFFIX="${1}"
-  BAZEL_OPTS="--config=opt --cxxopt=-D_GLIBCXX_USE_CXX11_ABI=0"
-  export CC_OPT_FLAGS="-mavx -msse4.2"
+  BAZEL_OPTS="-c opt --cxxopt=-D_GLIBCXX_USE_CXX11_ABI=0"
+  export CC_OPT_FLAGS='-mavx'
   if [ "${TF_NEED_CUDA}" == "1" ]; then
-    BAZEL_OPTS="${BAZEL_OPTS} --config=cuda --crosstool_top=//third_party/toolchains/preconfig/ubuntu16.04/gcc7_manylinux2010-nvcc-cuda11:toolchain"
-    export TF_NEED_ROCM=0
-    export TF_CUDA_COMPUTE_CAPABILITIES="sm_35,sm_50,sm_60,sm_70,sm_75,compute_80"
-  else
-    BAZEL_OPTS="${BAZEL_OPTS} --crosstool_top=//third_party/toolchains/preconfig/ubuntu16.04/gcc7_manylinux2010:toolchain"
+    BAZEL_OPTS="${BAZEL_OPTS} --config=cuda"
   fi
   bazel clean --expunge
   yes "" | ./configure
@@ -70,7 +66,7 @@ function build_libtensorflow_tarball() {
   # in tensorflow/tools/lib_package/BUILD are removed.
   # Till then, must manually run the test since these tests are
   # not covered by the continuous integration.
-  bazel test ${BAZEL_OPTS} --test_output=errors \
+  bazel test ${BAZEL_OPTS} \
     //tensorflow/tools/lib_package:libtensorflow_test \
     //tensorflow/tools/lib_package:libtensorflow_java_test
 
@@ -87,7 +83,7 @@ function build_libtensorflow_tarball() {
   cp bazel-bin/tensorflow/tools/lib_package/libtensorflow_jni.tar.gz ${DIR}/libtensorflow_jni${TARBALL_SUFFIX}.tar.gz
   cp bazel-bin/tensorflow/java/libtensorflow.jar ${DIR}
   cp_normalized_srcjar bazel-bin/tensorflow/java/libtensorflow-src.jar ${DIR}/libtensorflow-src.jar
-  cp bazel-bin/tensorflow/tools/lib_package/libtensorflow_proto.zip ${DIR}
+  cp bazel-genfiles/tensorflow/tools/lib_package/libtensorflow_proto.zip ${DIR}
   chmod -x ${DIR}/*
 }
 

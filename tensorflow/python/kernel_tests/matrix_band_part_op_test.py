@@ -23,7 +23,6 @@ from tensorflow.python.client import session
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes as dtypes_lib
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import gradient_checker
@@ -45,7 +44,6 @@ class MatrixBandPartTest(test_lib.TestCase):
 
 def _GetMatrixBandPartTest(dtype_, batch_shape_, shape_):
 
-  @test_util.run_v1_only("b/120545219")
   def Test(self):
     mat = np.ones(shape_).astype(dtype_)
     batch_mat = np.tile(mat, batch_shape_ + (1, 1))
@@ -56,7 +54,7 @@ def _GetMatrixBandPartTest(dtype_, batch_shape_, shape_):
           band_np = np.triu(band_np, -lower)
         if upper >= 0:
           band_np = np.tril(band_np, upper)
-        if batch_shape_ != ():
+        if batch_shape_ is not ():
           band_np = np.tile(band_np, batch_shape_ + (1, 1))
         for index_dtype in [dtypes_lib.int32, dtypes_lib.int64]:
           with self.cached_session(use_gpu=False):
@@ -64,7 +62,7 @@ def _GetMatrixBandPartTest(dtype_, batch_shape_, shape_):
                 batch_mat,
                 constant_op.constant(lower, index_dtype),
                 constant_op.constant(upper, index_dtype))
-            self.assertAllEqual(band_np, self.evaluate(band))
+            self.assertAllEqual(band_np, band.eval())
 
   return Test
 
@@ -75,7 +73,6 @@ class MatrixBandPartGradTest(test_lib.TestCase):
 
 def _GetMatrixBandPartGradTest(dtype_, batch_shape_, shape_):
 
-  @test_util.run_v1_only("b/120545219")
   def Test(self):
     shape = batch_shape_ + shape_
     x = constant_op.constant(np.random.rand(*shape), dtype=dtype_)
@@ -117,7 +114,7 @@ class MatrixBandPartBenchmark(test_lib.Benchmark):
             ops.device("/cpu:0"):
           matrix = variables.Variable(array_ops.ones(shape_))
           band = array_ops.matrix_band_part(matrix, limits[0], limits[1])
-          self.evaluate(variables.global_variables_initializer())
+          variables.global_variables_initializer().run()
           self.run_op_benchmark(
               sess,
               control_flow_ops.group(band),
@@ -131,7 +128,7 @@ class MatrixBandPartBenchmark(test_lib.Benchmark):
               ops.device("/gpu:0"):
             matrix = variables.Variable(array_ops.ones(shape_))
             band = array_ops.matrix_band_part(matrix, limits[0], limits[1])
-            self.evaluate(variables.global_variables_initializer())
+            variables.global_variables_initializer().run()
             self.run_op_benchmark(
                 sess,
                 control_flow_ops.group(band),

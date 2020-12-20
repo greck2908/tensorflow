@@ -20,9 +20,13 @@ limitations under the License.
 
 namespace tensorflow {
 
+VariantTensorData::VariantTensorData() {}
+
 VariantTensorData::VariantTensorData(VariantTensorDataProto proto) {
   FromProto(std::move(proto));
 }
+
+VariantTensorData::~VariantTensorData() {}
 
 int VariantTensorData::tensors_size() const { return tensors_.size(); }
 

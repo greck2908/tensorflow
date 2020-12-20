@@ -21,6 +21,9 @@ limitations under the License.
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
 
+#ifdef TENSORFLOW_USE_SYCL
+typedef Eigen::SyclDevice SYCLDevice;
+#endif  // TENSORFLOW_USE_SYCL
 
 #include "tensorflow/core/framework/numeric_types.h"
 #include "tensorflow/core/platform/types.h"
@@ -66,13 +69,19 @@ template <>
 struct proxy_type_pod<GPUDevice, 2> {
   typedef Eigen::half type;
 };
+
+#ifdef TENSORFLOW_USE_SYCL
 template <>
-struct proxy_type_pod<GPUDevice, 1> {
-  typedef ::tensorflow::int8 type;
+struct proxy_type_pod<SYCLDevice, 8> {
+  typedef double type;
 };
+template <>
+struct proxy_type_pod<SYCLDevice, 4> {
+  typedef float type;
+};
+#endif  // TENSORFLOW_USE_SYCL
 
-
-/// If POD we use proxy_type_pod, otherwise this maps to identity.
+/// If POD we use proxy_type_pod, otherwise this maps to identiy.
 template <typename Device, typename T>
 struct proxy_type {
   typedef typename std::conditional<
@@ -85,9 +94,12 @@ struct proxy_type {
 #define TF_CALL_CPU_PROXY_TYPES(m)                                     \
   TF_CALL_int64(m) TF_CALL_int32(m) TF_CALL_uint16(m) TF_CALL_int16(m) \
       TF_CALL_int8(m) TF_CALL_complex128(m)
-#define TF_CALL_GPU_PROXY_TYPES(m)                                    \
-  TF_CALL_double(m) TF_CALL_float(m) TF_CALL_half(m) TF_CALL_int32(m) \
-      TF_CALL_int8(m)
+#define TF_CALL_GPU_PROXY_TYPES(m) \
+  TF_CALL_double(m) TF_CALL_float(m) TF_CALL_half(m) TF_CALL_int32(m)
+#ifdef TENSORFLOW_USE_SYCL
+#define TF_CALL_SYCL_PROXY_TYPES(m) \
+  TF_CALL_double(m) TF_CALL_float(m) TF_CALL_int32(m)
+#endif  // TENSORFLOW_USE_SYCL
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_CORE_FRAMEWORK_REGISTER_TYPES_TRAITS_H_

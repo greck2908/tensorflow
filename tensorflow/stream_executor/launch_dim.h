@@ -37,7 +37,7 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/platform/port.h"
 
-#include "absl/strings/str_cat.h"
+#include "tensorflow/stream_executor/lib/strcat.h"
 #include "tensorflow/stream_executor/platform/port.h"
 
 namespace stream_executor {
@@ -56,8 +56,8 @@ struct ThreadDim : public Dim3D {
       : Dim3D(x, y, z) {}
 
   // Returns a string representation of the thread dimensionality.
-  std::string ToString() const {
-    return absl::StrCat("ThreadDim{", x, ", ", y, ", ", z, "}");
+  string ToString() const {
+    return port::StrCat("ThreadDim{", x, ", ", y, ", ", z, "}");
   }
 };
 
@@ -68,8 +68,8 @@ struct BlockDim : public Dim3D {
       : Dim3D(x, y, z) {}
 
   // Returns a string representation of the block dimensionality.
-  std::string ToString() const {
-    return absl::StrCat("BlockDim{", x, ", ", y, ", ", z, "}");
+  string ToString() const {
+    return port::StrCat("BlockDim{", x, ", ", y, ", ", z, "}");
   }
 };
 

@@ -25,6 +25,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/test_helpers.h"
 #include "tensorflow/compiler/xla/tests/client_library_test_base.h"
 #include "tensorflow/compiler/xla/tests/literal_test_util.h"
+#include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/lib/math/math_util.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/types.h"
@@ -42,7 +43,7 @@ class InfeedTest : public ClientLibraryTestBase {
     ASSERT_IS_OK(client_->TransferToInfeed(literal));
     XlaBuilder builder(TestName());
     Infeed(&builder, literal.shape());
-    if (literal.shape().IsTuple()) {
+    if (ShapeUtil::IsTuple(literal.shape())) {
       // TODO(b/30609564): Use ComputeAndCompareLiteral instead.
       ComputeAndCompareTuple(&builder, literal, {});
     } else {

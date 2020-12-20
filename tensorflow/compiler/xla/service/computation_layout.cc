@@ -20,7 +20,6 @@ limitations under the License.
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_join.h"
 #include "tensorflow/compiler/xla/types.h"
-#include "tensorflow/core/lib/hash/hash.h"
 
 namespace xla {
 
@@ -32,8 +31,6 @@ ComputationLayout::ComputationLayout(const ProgramShape& program_shape,
   }
   if (ignore_layouts) {
     SetToDefaultLayout();
-  } else {
-    SetToDefaultLayoutIfEmpty();
   }
 }
 
@@ -44,20 +41,9 @@ void ComputationLayout::SetToDefaultLayout() {
   result_layout_.SetToDefaultLayout();
 }
 
-void ComputationLayout::SetToDefaultLayoutIfEmpty() {
-  for (auto& parameter_layout : parameter_layouts_) {
-    if (!parameter_layout.LayoutIsSet()) {
-      parameter_layout.SetToDefaultLayout();
-    }
-  }
-  if (!result_layout_.LayoutIsSet()) {
-    result_layout_.SetToDefaultLayout();
-  }
-}
-
 bool ComputationLayout::LayoutIsSet() const {
-  return absl::c_all_of(parameter_layouts_,
-                        [](const ShapeLayout& s) { return s.LayoutIsSet(); }) &&
+  return std::all_of(parameter_layouts_.begin(), parameter_layouts_.end(),
+                     [](const ShapeLayout& s) { return s.LayoutIsSet(); }) &&
          result_layout_.LayoutIsSet();
 }
 
@@ -78,25 +64,6 @@ ProgramShape ComputationLayout::ComputeProgramShape() const {
   }
   *program_shape.mutable_result() = result_layout_.shape();
   return program_shape;
-}
-
-bool ComputationLayout::operator==(const ComputationLayout& other) const {
-  return result_layout() == other.result_layout() &&
-         parameter_layouts() == other.parameter_layouts();
-}
-
-bool ComputationLayout::operator!=(const ComputationLayout& other) const {
-  return result_layout() != other.result_layout() ||
-         parameter_layouts() != other.parameter_layouts();
-}
-
-uint64 ComputationLayout::Hash() const {
-  uint64 hash_value = ShapeUtil::Hash(result_layout_.shape());
-  for (const auto& parameter_layout : parameter_layouts_) {
-    hash_value = tensorflow::Hash64Combine(
-        hash_value, ShapeUtil::Hash(parameter_layout.shape()));
-  }
-  return hash_value;
 }
 
 }  // namespace xla

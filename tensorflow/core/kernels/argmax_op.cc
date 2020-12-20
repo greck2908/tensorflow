@@ -17,22 +17,21 @@ limitations under the License.
 
 #define EIGEN_USE_THREADS
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+#if GOOGLE_CUDA
 #define EIGEN_USE_GPU
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 #include "tensorflow/core/kernels/argmax_op.h"
 
 #include <memory>
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/tensor_types.h"
 #include "tensorflow/core/framework/types.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 
@@ -94,15 +93,11 @@ class ArgOp : public OpKernel {
       HANDLE_DIM(3);
       HANDLE_DIM(4);
       HANDLE_DIM(5);
-      HANDLE_DIM(6);
-      HANDLE_DIM(7);
 
       default:
         OP_REQUIRES(context, false,
-                    errors::InvalidArgument("Argmax and Argmin only support up "
-                                            "to 7 input dimensions, but got ",
-                                            input_dims, ". Inputs shape: ",
-                                            input.shape().DebugString()));
+                    errors::InvalidArgument(
+                        "ArgOp : Unhandled input dimensions: ", input_dims));
     }
   }
 #undef HANDLE_DIM
@@ -154,10 +149,8 @@ class ArgMinOp
                           ArgMinOp<CPUDevice, type, int32>);
 
 TF_CALL_REAL_NUMBER_TYPES(REGISTER_ARGMAX);
-TF_CALL_bool(REGISTER_ARGMAX);
 
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+#if GOOGLE_CUDA
 
 // Forward declarations of the functor specializations for GPU.
 namespace functor {
@@ -178,15 +171,11 @@ namespace functor {
   DECLARE_GPU_SPEC(T, int64, 3); \
   DECLARE_GPU_SPEC(T, int64, 4); \
   DECLARE_GPU_SPEC(T, int64, 5); \
-  DECLARE_GPU_SPEC(T, int64, 6); \
-  DECLARE_GPU_SPEC(T, int64, 7); \
   DECLARE_GPU_SPEC(T, int32, 1); \
   DECLARE_GPU_SPEC(T, int32, 2); \
   DECLARE_GPU_SPEC(T, int32, 3); \
   DECLARE_GPU_SPEC(T, int32, 4); \
-  DECLARE_GPU_SPEC(T, int32, 5); \
-  DECLARE_GPU_SPEC(T, int32, 6); \
-  DECLARE_GPU_SPEC(T, int32, 7);
+  DECLARE_GPU_SPEC(T, int32, 5);
 
 #define DECLARE_GPU_CLASS(T)                          \
   extern template struct ArgMax<GPUDevice, T, int64>; \
@@ -195,9 +184,7 @@ namespace functor {
   extern template struct ArgMin<GPUDevice, T, int32>;
 
 TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_SPECS);
-TF_CALL_bool(DECLARE_GPU_SPECS);
 TF_CALL_GPU_NUMBER_TYPES(DECLARE_GPU_CLASS);
-TF_CALL_bool(DECLARE_GPU_CLASS);
 
 #undef DECLARE_GPU_SPECS
 #undef DECLARE_GPU_CLASS
@@ -236,10 +223,9 @@ TF_CALL_bool(DECLARE_GPU_CLASS);
                           ArgMinOp<GPUDevice, type, int32>);
 
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_ARGMAX_GPU);
-TF_CALL_bool(REGISTER_ARGMAX_GPU);
 
 #undef REGISTER_ARGMAX_GPU
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

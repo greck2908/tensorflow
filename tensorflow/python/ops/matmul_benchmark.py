@@ -49,17 +49,13 @@ def build_graph(device, n, m, k, transpose_a, transpose_b, dtype):
   """
   with ops.device('%s' % device):
     if not transpose_a:
-      x = variables.VariableV1(random_ops.random_uniform([n, m], dtype=dtype),
-                               use_resource=False)
+      x = variables.VariableV1(random_ops.random_uniform([n, m], dtype=dtype))
     else:
-      x = variables.VariableV1(random_ops.random_uniform([m, n], dtype=dtype),
-                               use_resource=False)
+      x = variables.VariableV1(random_ops.random_uniform([m, n], dtype=dtype))
     if not transpose_b:
-      y = variables.VariableV1(random_ops.random_uniform([m, k], dtype=dtype),
-                               use_resource=False)
+      y = variables.VariableV1(random_ops.random_uniform([m, k], dtype=dtype))
     else:
-      y = variables.VariableV1(random_ops.random_uniform([k, m], dtype=dtype),
-                               use_resource=False)
+      y = variables.VariableV1(random_ops.random_uniform([k, m], dtype=dtype))
 
     z = math_ops.matmul(x, y, transpose_a=transpose_a, transpose_b=transpose_b)
     return control_flow_ops.group(z)

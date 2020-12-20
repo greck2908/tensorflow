@@ -1,17 +1,16 @@
-load("//tensorflow/core/platform:rules_cc.bzl", "cc_library")
-load("//tensorflow:tensorflow.bzl", "tf_cuda_cc_test")
-
 package(
     default_visibility = ["//visibility:public"],
-    licenses = ["notice"],  # Apache 2.0
 )
+
+licenses(["notice"])  # Apache 2.0
+
+load("//tensorflow:tensorflow.bzl", "tf_cuda_cc_test")
 
 tf_cuda_cc_test(
     name = "profiler_test",
     srcs = ["profiler_test.cc"],
     tags = [
-        "no_gpu",  # b/77649654
-        "no_rocm",  # stream level tracing not supported on ROCm
+        "noguitar",  # b/77649654
     ],
     deps = [
         ":profiler",

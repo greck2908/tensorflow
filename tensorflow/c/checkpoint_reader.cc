@@ -18,9 +18,9 @@ limitations under the License.
 #include <unordered_set>
 #include <utility>
 
+#include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/lib/core/stringpiece.h"
 #include "tensorflow/core/platform/env.h"
-#include "tensorflow/core/platform/status.h"
-#include "tensorflow/core/platform/stringpiece.h"
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/util/saved_tensor_slice_util.h"
 
@@ -29,7 +29,8 @@ namespace checkpoint {
 
 class TensorSliceReader;
 
-CheckpointReader::CheckpointReader(const string& filename, TF_Status* status)
+CheckpointReader::CheckpointReader(const string& filename,
+                                   TF_Status* out_status)
     : reader_(nullptr),
       v2_reader_(nullptr),
       var_to_shape_map_(nullptr),
@@ -42,7 +43,7 @@ CheckpointReader::CheckpointReader(const string& filename, TF_Status* status)
     v2_reader_.reset(
         new BundleReader(Env::Default(), filename /* prefix to a V2 ckpt */));
     if (!v2_reader_->status().ok()) {
-      Set_TF_Status_from_Status(status, v2_reader_->status());
+      Set_TF_Status_from_Status(out_status, v2_reader_->status());
       return;
     }
     auto result = BuildV2VarMaps();
@@ -51,7 +52,7 @@ CheckpointReader::CheckpointReader(const string& filename, TF_Status* status)
   } else {
     reader_.reset(new TensorSliceReader(filename));
     if (!reader_->status().ok()) {
-      Set_TF_Status_from_Status(status, reader_->status());
+      Set_TF_Status_from_Status(out_status, reader_->status());
       return;
     }
     var_to_shape_map_.reset(

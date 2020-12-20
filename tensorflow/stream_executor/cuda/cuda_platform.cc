@@ -15,20 +15,17 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/cuda/cuda_platform.h"
 
-#include "absl/base/call_once.h"
-#include "absl/base/const_init.h"
-#include "absl/memory/memory.h"
-#include "absl/strings/str_cat.h"
-#include "absl/strings/str_format.h"
 #include "tensorflow/stream_executor/cuda/cuda_driver.h"
 #include "tensorflow/stream_executor/cuda/cuda_gpu_executor.h"
 #include "tensorflow/stream_executor/cuda/cuda_platform_id.h"
 #include "tensorflow/stream_executor/lib/error.h"
 #include "tensorflow/stream_executor/lib/initialize.h"
+#include "tensorflow/stream_executor/lib/ptr_util.h"
 #include "tensorflow/stream_executor/lib/status.h"
+#include "tensorflow/stream_executor/lib/stringprintf.h"
 
 namespace stream_executor {
-namespace gpu {
+namespace cuda {
 namespace {
 
 // Synchronize with spinlocks.
@@ -77,25 +74,30 @@ CudaPlatform::~CudaPlatform() {}
 void CudaPlatform::InspectNumaNodes() {
   // To get NUMA node information, we need to create all executors, so we can
   // examine their device descriptions to see their bus assignments.
-  static absl::once_flag once;
-  absl::call_once(once, [&] {
-    StreamExecutorConfig config;
-    for (int i = 0; i < VisibleDeviceCount(); i++) {
-      config.ordinal = i;
-      StreamExecutor* exec = GetExecutor(config).ValueOrDie();
-      if (i == 0) {
-        // NUMA nodes may not start at 0, so set the minimum node  based on the
-        // first executor we see.
-        min_numa_node_ = exec->GetDeviceDescription().numa_node();
-        limit_numa_node_ = min_numa_node_ + 1;
-      } else {
-        min_numa_node_ =
-            std::min(min_numa_node_, exec->GetDeviceDescription().numa_node());
-        limit_numa_node_ = std::max(
-            limit_numa_node_, exec->GetDeviceDescription().numa_node() + 1);
-      }
+  static bool initialized = false;
+  static mutex numa_mutex(LINKER_INITIALIZED);
+  mutex_lock lock(numa_mutex);
+  if (initialized) {
+    return;
+  }
+
+  StreamExecutorConfig config;
+  for (int i = 0; i < VisibleDeviceCount(); i++) {
+    config.ordinal = i;
+    StreamExecutor* exec = GetExecutor(config).ValueOrDie();
+    if (i == 0) {
+      // NUMA nodes may not start at 0, so set the minimum node  based on the
+      // first executor we see.
+      min_numa_node_ = exec->GetDeviceDescription().numa_node();
+      limit_numa_node_ = min_numa_node_ + 1;
+    } else {
+      min_numa_node_ =
+          std::min(min_numa_node_, exec->GetDeviceDescription().numa_node());
+      limit_numa_node_ = std::max(limit_numa_node_,
+                                  exec->GetDeviceDescription().numa_node() + 1);
     }
-  });
+  }
+  initialized = true;
 }
 
 int CudaPlatform::BusCount() {
@@ -124,27 +126,22 @@ port::StatusOr<StreamExecutor*> CudaPlatform::FirstExecutorForBus(
 
   return port::Status(
       port::error::NOT_FOUND,
-      absl::StrFormat("Executor for bus %d not found.", bus_ordinal));
+      port::Printf("Executor for bus %d not found.", bus_ordinal));
 }
 
-Platform::Id CudaPlatform::id() const { return cuda::kCudaPlatformId; }
+Platform::Id CudaPlatform::id() const { return kCudaPlatformId; }
 
 int CudaPlatform::VisibleDeviceCount() const {
   // Throw away the result - it logs internally, and this [containing] function
   // isn't in the path of user control. It's safe to call this > 1x.
-  if (!gpu::GpuDriver::Init().ok()) {
+  if (!cuda::CUDADriver::Init().ok()) {
     return -1;
   }
 
-  return GpuDriver::GetDeviceCount();
+  return CUDADriver::GetDeviceCount();
 }
 
-const std::string& CudaPlatform::Name() const { return name_; }
-
-port::StatusOr<std::unique_ptr<DeviceDescription>>
-CudaPlatform::DescriptionForDevice(int ordinal) const {
-  return GpuExecutor::CreateDeviceDescription(ordinal);
-}
+const string& CudaPlatform::Name() const { return name_; }
 
 port::StatusOr<StreamExecutor*> CudaPlatform::ExecutorForDevice(int ordinal) {
   StreamExecutorConfig config;
@@ -171,16 +168,15 @@ port::StatusOr<StreamExecutor*> CudaPlatform::GetExecutor(
 
 port::StatusOr<std::unique_ptr<StreamExecutor>>
 CudaPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
-  auto executor = absl::make_unique<StreamExecutor>(
-      this, absl::make_unique<GpuExecutor>(config.plugin_config),
-      config.ordinal);
-  auto init_status = executor->Init(config.device_options);
+  auto executor = MakeUnique<StreamExecutor>(
+      this, MakeUnique<CUDAExecutor>(config.plugin_config));
+  auto init_status = executor->Init(config.ordinal, config.device_options);
   if (!init_status.ok()) {
     return port::Status(
         port::error::INTERNAL,
-        absl::StrFormat(
+        port::Printf(
             "failed initializing StreamExecutor for CUDA device ordinal %d: %s",
-            config.ordinal, init_status.ToString()));
+            config.ordinal, init_status.ToString().c_str()));
   }
 
   return std::move(executor);
@@ -195,13 +191,13 @@ void CudaPlatform::UnregisterTraceListener(TraceListener* listener) {
   LOG(FATAL) << "not yet implemented: unregister CUDA trace listener";
 }
 
-}  // namespace gpu
+}  // namespace cuda
 
 static void InitializeCudaPlatform() {
   // Disabling leak checking, MultiPlatformManager does not destroy its
   // registered platforms.
 
-  std::unique_ptr<gpu::CudaPlatform> platform(new gpu::CudaPlatform);
+  std::unique_ptr<cuda::CudaPlatform> platform(new cuda::CudaPlatform);
   SE_CHECK_OK(MultiPlatformManager::RegisterPlatform(std::move(platform)));
 }
 
@@ -213,5 +209,3 @@ REGISTER_MODULE_INITIALIZER(cuda_platform,
 // Note that module initialization sequencing is not supported in the
 // open-source project, so this will be a no-op there.
 REGISTER_MODULE_INITIALIZER_SEQUENCE(cuda_platform, multi_platform_manager);
-REGISTER_MODULE_INITIALIZER_SEQUENCE(multi_platform_manager_listener,
-                                     cuda_platform);

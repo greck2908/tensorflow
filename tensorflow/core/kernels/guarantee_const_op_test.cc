@@ -21,7 +21,6 @@ limitations under the License.
 #include "tensorflow/core/kernels/ops_testutil.h"
 #include "tensorflow/core/kernels/ops_util.h"
 #include "tensorflow/core/kernels/variable_ops.h"
-#include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/test.h"
 
@@ -58,11 +57,11 @@ TEST_F(GuaranteeConstOpTest, Int32Success_2_3) {
 
 TEST_F(GuaranteeConstOpTest, StringSuccess) {
   TF_ASSERT_OK(Init(DT_STRING));
-  AddInputFromArray<tstring>(TensorShape({6}), {"A", "b", "C", "d", "E", "f"});
+  AddInputFromArray<string>(TensorShape({6}), {"A", "b", "C", "d", "E", "f"});
   TF_ASSERT_OK(RunOpKernel());
   Tensor expected(allocator(), DT_STRING, TensorShape({6}));
-  test::FillValues<tstring>(&expected, {"A", "b", "C", "d", "E", "f"});
-  test::ExpectTensorEqual<tstring>(expected, *GetOutput(0));
+  test::FillValues<string>(&expected, {"A", "b", "C", "d", "E", "f"});
+  test::ExpectTensorEqual<string>(expected, *GetOutput(0));
 }
 
 TEST_F(GuaranteeConstOpTest, ResourceInputError) {

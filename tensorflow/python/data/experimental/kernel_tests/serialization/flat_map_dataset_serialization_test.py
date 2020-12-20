@@ -17,12 +17,8 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl.testing import parameterized
-
 from tensorflow.python.data.experimental.kernel_tests.serialization import dataset_serialization_test_base
-from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -36,10 +32,8 @@ from tensorflow.python.platform import test
 
 
 class FlatMapDatasetSerializationTest(
-    dataset_serialization_test_base.DatasetSerializationTestBase,
-    parameterized.TestCase):
+    dataset_serialization_test_base.DatasetSerializationTestBase):
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCore(self):
     # Complicated way of saying range(start, start+25).
     def build_ds(start):
@@ -49,9 +43,8 @@ class FlatMapDatasetSerializationTest(
 
       return dataset_ops.Dataset.range(start, start + 5 * 5, 5).flat_map(map_fn)
 
-    self.run_core_tests(lambda: build_ds(0), 25)
+    self.run_core_tests(lambda: build_ds(0), lambda: build_ds(10), 25)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testMapThenFlatMap(self):
 
     def build_ds():
@@ -59,15 +52,14 @@ class FlatMapDatasetSerializationTest(
       def flat_map_fn(_):
 
         def map_fn(y):
-          return 10 * math_ops.cast(y, dtypes.int32)
+          return 10 * math_ops.to_int32(y)
 
         return dataset_ops.Dataset.range(100).map(map_fn)
 
       return dataset_ops.Dataset.range(5).flat_map(flat_map_fn)
 
-    self.run_core_tests(build_ds, 500)
+    self.run_core_tests(build_ds, None, 500)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCaptureDefunInMapFn(self):
 
     def build_ds():
@@ -76,15 +68,14 @@ class FlatMapDatasetSerializationTest(
 
         @function.Defun(dtypes.int64)
         def defun_fn(x):
-          return constant_op.constant(1000) + math_ops.cast(x, dtypes.int32)
+          return constant_op.constant(1000) + math_ops.to_int32(x)
 
         return dataset_ops.Dataset.from_tensor_slices([defun_fn(x)])
 
       return dataset_ops.Dataset.range(100).flat_map(map_fn)
 
-    self.run_core_tests(build_ds, 100)
+    self.run_core_tests(build_ds, None, 100)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testDisallowVariableCapture(self):
 
     def build_ds():
@@ -93,9 +84,8 @@ class FlatMapDatasetSerializationTest(
       return dataset_ops.Dataset.range(5).flat_map(
           lambda _: dataset_ops.Dataset.from_tensor_slices([test_var]))
 
-    self.verify_error_on_save(build_ds, 5, errors.FailedPreconditionError)
+    self.verify_error_on_save(build_ds, 5, errors.InvalidArgumentError)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testDisallowCapturingStatefulOps(self):
 
     def build_ds():
@@ -104,15 +94,14 @@ class FlatMapDatasetSerializationTest(
 
         def map_fn(x):
           return random_ops.random_uniform(
-              (), 0, 10, dtype=dtypes.int32) * math_ops.cast(x, dtypes.int32)
+              (), 0, 10, dtype=dtypes.int32) * math_ops.to_int32(x)
 
         return dataset_ops.Dataset.range(100).map(map_fn)
 
       return dataset_ops.Dataset.range(5).flat_map(flat_map_fn)
 
-    self.verify_error_on_save(build_ds, 500, errors.FailedPreconditionError)
+    self.verify_error_on_save(build_ds, 500, errors.InvalidArgumentError)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testSparseCore(self):
 
     def _map_fn(i):
@@ -126,7 +115,7 @@ class FlatMapDatasetSerializationTest(
     def _build_ds():
       return dataset_ops.Dataset.range(10).map(_map_fn).flat_map(_flat_map_fn)
 
-    self.run_core_tests(_build_ds, 20)
+    self.run_core_tests(_build_ds, None, 20)
 
 
 if __name__ == "__main__":

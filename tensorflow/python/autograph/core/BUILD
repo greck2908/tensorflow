@@ -1,8 +1,6 @@
-load("//tensorflow:tensorflow.bzl", "py_test")
+licenses(["notice"])  # Apache 2.0
 
-package(
-    licenses = ["notice"],  # Apache 2.0
-)
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 filegroup(
     name = "all_files",
@@ -19,22 +17,19 @@ filegroup(
 py_library(
     name = "core",
     srcs = [
-        "ag_ctx.py",
         "config.py",
-        "config_lib.py",
         "converter.py",
-        "function_wrappers.py",
-        "unsupported_features_checker.py",
+        "errors.py",
+        "function_wrapping.py",
+        "naming.py",
     ],
-    srcs_version = "PY3",
+    srcs_version = "PY2AND3",
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         "//tensorflow/python:framework_ops",
-        "//tensorflow/python/autograph/operators",
         "//tensorflow/python/autograph/pyct",
         "//tensorflow/python/autograph/pyct/static_analysis",
         "//tensorflow/python/autograph/utils",
-        "@gast_archive//:gast",
     ],
 )
 
@@ -43,11 +38,10 @@ py_library(
     srcs = [
         "converter_testing.py",
     ],
-    srcs_version = "PY3",
+    srcs_version = "PY2AND3",
     visibility = ["//tensorflow:__subpackages__"],
     deps = [
         ":core",
-        "//tensorflow/python/autograph/lang",
         "//tensorflow/python/autograph/operators",
         "//tensorflow/python/autograph/pyct",
         "//tensorflow/python/autograph/pyct/static_analysis",
@@ -60,8 +54,7 @@ py_library(
 py_test(
     name = "converter_test",
     srcs = ["converter_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    srcs_version = "PY2AND3",
     deps = [
         ":core",
         ":test_lib",
@@ -70,10 +63,34 @@ py_test(
 )
 
 py_test(
-    name = "function_wrappers_test",
-    srcs = ["function_wrappers_test.py"],
-    python_version = "PY3",
-    srcs_version = "PY3",
+    name = "errors_test",
+    srcs = ["errors_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":core",
+        "//tensorflow/python:array_ops",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:control_flow_ops",
+        "//tensorflow/python:dtypes",
+        "//tensorflow/python:math_ops",
+        "//tensorflow/python:random_ops",
+    ],
+)
+
+py_test(
+    name = "function_wrapping_test",
+    srcs = ["function_wrapping_test.py"],
+    srcs_version = "PY2AND3",
+    deps = [
+        ":core",
+        "//tensorflow/python:client_testlib",
+    ],
+)
+
+py_test(
+    name = "naming_test",
+    srcs = ["naming_test.py"],
+    srcs_version = "PY2AND3",
     deps = [
         ":core",
         "//tensorflow/python:client_testlib",

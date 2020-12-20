@@ -33,19 +33,18 @@ XlaInterpreterExecutor::XlaInterpreterExecutor(
 
 XlaInterpreterExecutor::~XlaInterpreterExecutor() {}
 
-DeviceMemoryBase XlaInterpreterExecutor::Allocate(uint64 size,
-                                                  int64 memory_space) {
-  return DeviceMemoryBase(new char[size], size);
-}
+void *XlaInterpreterExecutor::Allocate(uint64 size) { return new char[size]; }
 
-void *XlaInterpreterExecutor::GetSubBuffer(DeviceMemoryBase *parent,
-                                           uint64 offset_bytes,
-                                           uint64 /*size_bytes*/) {
+void *XlaInterpreterExecutor::AllocateSubBuffer(DeviceMemoryBase *parent,
+                                                uint64 offset_bytes,
+                                                uint64 /*size_bytes*/) {
   return parent + offset_bytes;
 }
 
 void XlaInterpreterExecutor::Deallocate(DeviceMemoryBase *mem) {
-  delete[] static_cast<char *>(mem->opaque());
+  if (!mem->is_sub_buffer()) {
+    delete[] static_cast<char *>(mem->opaque());
+  }
 }
 
 bool XlaInterpreterExecutor::Memcpy(Stream *stream, void *host_dst,
@@ -79,14 +78,9 @@ port::Status XlaInterpreterExecutor::SynchronousMemcpy(
   return port::Status::OK();
 }
 
-bool XlaInterpreterExecutor::HostCallback(
-    Stream *stream, std::function<port::Status()> callback) {
-  AsExecutorStream(stream)->EnqueueTask([callback]() {
-    port::Status s = callback();
-    if (!s.ok()) {
-      LOG(WARNING) << "Host callback failed: " << s;
-    }
-  });
+bool XlaInterpreterExecutor::HostCallback(Stream *stream,
+                                          std::function<void()> callback) {
+  AsExecutorStream(stream)->EnqueueTask(callback);
   return true;
 }
 
@@ -113,8 +107,7 @@ port::Status XlaInterpreterExecutor::BlockHostUntilDone(Stream *stream) {
   return port::Status::OK();
 }
 
-port::StatusOr<std::unique_ptr<DeviceDescription>>
-XlaInterpreterExecutor::CreateDeviceDescription(int device_ordinal) {
+DeviceDescription *XlaInterpreterExecutor::PopulateDeviceDescription() const {
   internal::DeviceDescriptionBuilder builder;
 
   builder.set_device_address_bits(64);
@@ -123,7 +116,7 @@ XlaInterpreterExecutor::CreateDeviceDescription(int device_ordinal) {
   builder.set_device_memory_size(static_cast<uint64>(4) * 1024 * 1024 * 1024);
   builder.set_clock_rate_ghz(static_cast<float>(CLOCKS_PER_SEC) / 1e9);
 
-  return builder.Build();
+  return builder.Build().release();
 }
 
 }  // namespace interpreter

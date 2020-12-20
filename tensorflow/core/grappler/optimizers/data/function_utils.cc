@@ -88,27 +88,18 @@ void ReplaceReferences(const string& from, const string& to,
 
 void AddFunctionOutputWithUniqueName(StringPiece prefix,
                                      StringPiece output_tensor_name,
-                                     FunctionDef* fdef, DataType dtype) {
+                                     FunctionDef* function, DataType dt) {
   string name = string(prefix);
-  int id = fdef->signature().output_arg_size();
-  while (ContainsFunctionOutputWithName(name, *fdef)) {
+  int id = function->signature().output_arg_size();
+  while (ContainsFunctionOutputWithName(name, *function)) {
     name = strings::StrCat(prefix, "/_", id);
     ++id;
   }
-  auto* output = fdef->mutable_signature()->mutable_output_arg()->Add();
+  auto* output = function->mutable_signature()->mutable_output_arg()->Add();
   output->set_name(name);
-  output->set_type(dtype);
+  output->set_type(dt);
 
-  (*fdef->mutable_ret())[name] = string(output_tensor_name);
-}
-
-OpDef_ArgDef* AddFunctionInput(const string& name, FunctionDef* fdef,
-                               DataType dtype) {
-  auto* input_arg = fdef->mutable_signature()->mutable_input_arg()->Add();
-  input_arg->set_type(dtype);
-  input_arg->set_name(name);
-
-  return input_arg;
+  (*function->mutable_ret())[name] = string(output_tensor_name);
 }
 
 NodeDef* AddNode(StringPiece name, StringPiece op,
@@ -125,7 +116,7 @@ NodeDef* AddNode(StringPiece name, StringPiece op,
   for (const string& input : inputs) {
     node->add_input(input);
   }
-  for (const auto& attr : attributes) {
+  for (auto attr : attributes) {
     (*node->mutable_attr())[attr.first] = attr.second;
   }
   return node;
@@ -180,57 +171,6 @@ void SetUniqueFunctionNodeName(StringPiece prefix, FunctionDef* function,
   node->set_name(std::move(name));
 }
 
-bool IsFunctionStateful(const FunctionLibraryDefinition& library,
-                        const FunctionDef& function_def, bool skip_assert) {
-  if (!function_def.signature().is_stateful()) return false;
-
-  for (const NodeDef& node_def : function_def.node_def()) {
-    if (IsNodeStateful(library, node_def, skip_assert)) return true;
-  }
-  return false;
-}
-
-bool IsNodeStateful(const FunctionLibraryDefinition& library,
-                    const NodeDef& node, bool skip_assert) {
-  const OpDef* op_def;
-  Status s = OpRegistry::Global()->LookUpOpDef(node.op(), &op_def);
-
-  if (!s.ok()) return true;
-
-  if (!op_def->is_stateful()) return false;
-
-  if (skip_assert && op_def->name() == "Assert") {
-    return false;
-  }
-
-  if (op_def->name() == "If") {
-    const FunctionDef* then_func =
-        library.Find(node.attr().at("then_branch").func().name());
-    const FunctionDef* else_func =
-        library.Find(node.attr().at("else_branch").func().name());
-    if ((then_func != nullptr &&
-         !IsFunctionStateful(library, *then_func, skip_assert)) &&
-        (else_func != nullptr &&
-         !IsFunctionStateful(library, *else_func, skip_assert))) {
-      return false;
-    }
-  }
-
-  if (op_def->name() == "While") {
-    const FunctionDef* cond_func =
-        library.Find(node.attr().at("cond").func().name());
-    const FunctionDef* body_func =
-        library.Find(node.attr().at("body").func().name());
-    if ((cond_func != nullptr &&
-         !IsFunctionStateful(library, *cond_func, skip_assert)) &&
-        (body_func != nullptr &&
-         !IsFunctionStateful(library, *body_func, skip_assert))) {
-      return false;
-    }
-  }
-  return true;
-}
-
-}  // namespace function_utils
-}  // namespace grappler
-}  // namespace tensorflow
+}  // end namespace function_utils
+}  // end namespace grappler
+}  // end namespace tensorflow

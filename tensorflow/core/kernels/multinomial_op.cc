@@ -53,20 +53,6 @@ struct MultinomialFunctor {
                   typename TTypes<OutputType>::Matrix output);
 };
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-extern template struct MultinomialFunctor<GPUDevice, Eigen::half, int32>;
-extern template struct MultinomialFunctor<GPUDevice, float, int32>;
-extern template struct MultinomialFunctor<GPUDevice, double, int32>;
-extern template struct MultinomialFunctor<GPUDevice, int32, int32>;
-extern template struct MultinomialFunctor<GPUDevice, int64, int32>;
-
-extern template struct MultinomialFunctor<GPUDevice, Eigen::half, int64>;
-extern template struct MultinomialFunctor<GPUDevice, float, int64>;
-extern template struct MultinomialFunctor<GPUDevice, double, int64>;
-extern template struct MultinomialFunctor<GPUDevice, int32, int64>;
-extern template struct MultinomialFunctor<GPUDevice, int64, int64>;
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-
 template <typename T, typename OutputType>
 struct MultinomialFunctor<CPUDevice, T, OutputType> {
   void operator()(OpKernelContext* ctx, const CPUDevice& d,
@@ -253,7 +239,7 @@ TF_CALL_float(REGISTER);
 TF_CALL_double(REGISTER);
 #undef REGISTER
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #define REGISTER(TYPE)                                                   \
   REGISTER_KERNEL_BUILDER(Name("Multinomial")                            \
                               .Device(DEVICE_GPU)                        \
@@ -273,7 +259,7 @@ TF_CALL_float(REGISTER);
 TF_CALL_double(REGISTER);
 #undef REGISTER
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 template <typename Device, typename T, typename OutputType>
 class StatelessMultinomialOp : public MultinomialOp<Device, T, OutputType> {
@@ -321,7 +307,7 @@ TF_CALL_float(REGISTER);
 TF_CALL_double(REGISTER);
 #undef REGISTER
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #define REGISTER(TYPE)                                                    \
   REGISTER_KERNEL_BUILDER(Name("StatelessMultinomial")                    \
                               .Device(DEVICE_GPU)                         \
@@ -343,7 +329,7 @@ TF_CALL_float(REGISTER);
 TF_CALL_double(REGISTER);
 #undef REGISTER
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // end namespace
 

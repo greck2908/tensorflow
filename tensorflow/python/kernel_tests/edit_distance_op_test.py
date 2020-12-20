@@ -49,11 +49,11 @@ class EditDistanceTest(test.TestCase):
 
     if expected_err_re is None:
       self.assertEqual(edit_distance.get_shape(), expected_shape)
-      output = self.evaluate(edit_distance)
+      output = edit_distance.eval()
       self.assertAllClose(output, expected_output)
     else:
       with self.assertRaisesOpError(expected_err_re):
-        self.evaluate(edit_distance)
+        edit_distance.eval()
 
   def _testEditDistance(self,
                         hypothesis,

@@ -16,6 +16,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/hlo_subcomputation_unification.h"
 
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
+#include "tensorflow/compiler/xla/service/hlo_graph_dumper.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
 #include "tensorflow/compiler/xla/service/hlo_opcode.h"
@@ -65,7 +66,7 @@ class HloSubcomputationUnificationTest : public HloTestBase {
 };
 
 TEST_F(HloSubcomputationUnificationTest, UnifyIdentities) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
 
   auto callee1 =
@@ -86,13 +87,23 @@ TEST_F(HloSubcomputationUnificationTest, UnifyIdentities) {
 
   EXPECT_EQ(3, module->computation_count());
   EXPECT_NE(x->to_apply(), y->to_apply());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "before unification",
+                                module->config().debug_options());
+  }
   EXPECT_TRUE(HloSubcomputationUnification().Run(module.get()).ValueOrDie());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "after unification",
+                                module->config().debug_options());
+  }
   EXPECT_EQ(2, module->computation_count());
   EXPECT_EQ(x->to_apply(), y->to_apply());
 }
 
 TEST_F(HloSubcomputationUnificationTest, UnifyAdditions) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
 
   auto callee1 =
@@ -115,14 +126,24 @@ TEST_F(HloSubcomputationUnificationTest, UnifyAdditions) {
 
   EXPECT_EQ(3, module->computation_count());
   EXPECT_NE(x->to_apply(), y->to_apply());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "before unification",
+                                module->config().debug_options());
+  }
   EXPECT_TRUE(HloSubcomputationUnification().Run(module.get()).ValueOrDie());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "after unification",
+                                module->config().debug_options());
+  }
   EXPECT_EQ(2, module->computation_count());
   EXPECT_EQ(x->to_apply(), y->to_apply());
 }
 
 // Do not unify subcomputations with different parameter shapes.
 TEST_F(HloSubcomputationUnificationTest, DifferentParameterShapes) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
 
   auto callee1 =
@@ -133,7 +154,7 @@ TEST_F(HloSubcomputationUnificationTest, DifferentParameterShapes) {
   auto param1 = builder.AddInstruction(
       HloInstruction::CreateParameter(0, r1s32_5_, "param1"));
   auto param2 = builder.AddInstruction(
-      HloInstruction::CreateParameter(1, r1s32_3_, "param2"));
+      HloInstruction::CreateParameter(1, r1s32_5_, "param2"));
   auto x = builder.AddInstruction(
       HloInstruction::CreateCall(r1s32_5_, {param1, param1}, callee1));
   auto y = builder.AddInstruction(
@@ -145,7 +166,17 @@ TEST_F(HloSubcomputationUnificationTest, DifferentParameterShapes) {
 
   EXPECT_EQ(3, module->computation_count());
   EXPECT_NE(x->to_apply(), y->to_apply());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "before unification",
+                                module->config().debug_options());
+  }
   EXPECT_FALSE(HloSubcomputationUnification().Run(module.get()).ValueOrDie());
+  if (VLOG_IS_ON(1)) {
+    hlo_graph_dumper::DumpGraph(*module->entry_computation(),
+                                "after unification",
+                                module->config().debug_options());
+  }
   EXPECT_EQ(3, module->computation_count());
   EXPECT_NE(x->to_apply(), y->to_apply());
 }
@@ -153,7 +184,7 @@ TEST_F(HloSubcomputationUnificationTest, DifferentParameterShapes) {
 // Regression test for b/31466798. Checks that entry_computation is still valid
 // after unification.
 TEST_F(HloSubcomputationUnificationTest, TwoIdenticalComputations) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   for (int i = 0; i < 2; ++i) {
     HloComputation::Builder builder("pow");
     auto x =

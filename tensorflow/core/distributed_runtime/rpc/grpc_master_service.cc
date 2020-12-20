@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-// GrpcMasterService implements the RPC service MasterService.
+// GrpcMasterService implements the RPC service MasterSerivce.
 //
 // A GrpcMasterService maintains the state of live graph computation
 // sessions, each session orchestrates both local and remote devices
@@ -32,6 +32,7 @@ limitations under the License.
 
 #include "grpcpp/alarm.h"
 #include "grpcpp/server_builder.h"
+
 #include "tensorflow/core/distributed_runtime/master.h"
 #include "tensorflow/core/distributed_runtime/rpc/async_service_interface.h"
 #include "tensorflow/core/distributed_runtime/rpc/grpc_call.h"
@@ -40,7 +41,6 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/platform/tracing.h"
-#include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/protobuf/master.pb.h"
 
 namespace tensorflow {
@@ -138,7 +138,7 @@ class GrpcMasterService : public AsyncServiceInterface {
   grpc::MasterService::AsyncService master_service_;
 
   mutex mu_;
-  bool is_shutdown_ TF_GUARDED_BY(mu_);
+  bool is_shutdown_ GUARDED_BY(mu_);
   const ConfigProto default_session_config_;
   ::grpc::Alarm* shutdown_alarm_ = nullptr;
 
@@ -196,7 +196,8 @@ class GrpcMasterService : public AsyncServiceInterface {
     call->SetCancelCallback([call_opts]() { call_opts->StartCancel(); });
     master_impl_->RunStep(
         call_opts, wrapped_request, wrapped_response,
-        [call, call_opts, wrapped_request, trace](const Status& status) {
+        [call, call_opts, wrapped_request, wrapped_response,
+         trace](const Status& status) {
           call->ClearCancelCallback();
           delete call_opts;
           delete wrapped_request;
@@ -284,7 +285,7 @@ class GrpcMasterService : public AsyncServiceInterface {
 #undef ENQUEUE_REQUEST
 
   // Start tracing, including the ID attached to the RPC.
-  profiler::TraceMe* TraceRpc(
+  tracing::ScopedActivity* TraceRpc(
       StringPiece name,
       const std::multimap<::grpc::string_ref, ::grpc::string_ref>& metadata) {
     StringPiece id;
@@ -292,8 +293,7 @@ class GrpcMasterService : public AsyncServiceInterface {
     if (it != metadata.end()) {
       id = StringPiece(it->second.data(), it->second.size());
     }
-    return new profiler::TraceMe([&] { return strings::StrCat(name, ":", id); },
-                                 profiler::TraceMeLevel::kInfo);
+    return new tracing::ScopedActivity(name, id);
   }
 
   TF_DISALLOW_COPY_AND_ASSIGN(GrpcMasterService);

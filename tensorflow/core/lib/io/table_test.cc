@@ -19,8 +19,6 @@ limitations under the License.
 #include <map>
 #include <string>
 #include <vector>
-
-#include "absl/strings/escaping.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/io/block.h"
 #include "tensorflow/core/lib/io/block_builder.h"
@@ -28,6 +26,7 @@ limitations under the License.
 #include "tensorflow/core/lib/io/iterator.h"
 #include "tensorflow/core/lib/io/table_builder.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/snappy.h"
 #include "tensorflow/core/platform/test.h"
@@ -97,14 +96,7 @@ class StringSink : public WritableFile {
 
   Status Close() override { return Status::OK(); }
   Status Flush() override { return Status::OK(); }
-  Status Name(StringPiece* result) const override {
-    return errors::Unimplemented("StringSink does not support Name()");
-  }
   Status Sync() override { return Status::OK(); }
-  Status Tell(int64* pos) override {
-    *pos = contents_.size();
-    return Status::OK();
-  }
 
   Status Append(StringPiece data) override {
     contents_.append(data.data(), data.size());
@@ -123,10 +115,6 @@ class StringSource : public RandomAccessFile {
   ~StringSource() override {}
 
   uint64 Size() const { return contents_.size(); }
-
-  Status Name(StringPiece* result) const override {
-    return errors::Unimplemented("StringSource does not support Name()");
-  }
 
   Status Read(uint64 offset, size_t n, StringPiece* result,
               char* scratch) const override {
@@ -203,7 +191,7 @@ class BlockConstructor : public Constructor {
     data_ = string(builder.Finish());
     BlockContents contents;
     contents.data = data_;
-    contents.cacheable = false;
+    contents.cachable = false;
     contents.heap_allocated = false;
     block_ = new Block(contents);
     return Status::OK();
@@ -358,7 +346,7 @@ class Harness : public ::testing::Test {
           string key = PickRandomKey(rnd, keys);
           model_iter = data.lower_bound(key);
           if (kVerbose)
-            fprintf(stderr, "Seek '%s'\n", absl::CEscape(key).c_str());
+            fprintf(stderr, "Seek '%s'\n", str_util::CEscape(key).c_str());
           iter->Seek(StringPiece(key));
           ASSERT_EQ(ToStringPiecePair(data, model_iter),
                     ToStringPiecePair(iter));
@@ -446,7 +434,7 @@ TEST_F(Harness, ZeroRestartPointsInBlock) {
   memset(data, 0, sizeof(data));
   BlockContents contents;
   contents.data = StringPiece(data, sizeof(data));
-  contents.cacheable = false;
+  contents.cachable = false;
   contents.heap_allocated = false;
   Block block(contents);
   Iterator* iter = block.NewIterator();

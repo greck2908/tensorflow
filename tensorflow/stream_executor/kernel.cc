@@ -19,12 +19,12 @@ limitations under the License.
 
 #include "tensorflow/stream_executor/kernel.h"
 
-#include "absl/strings/string_view.h"
-#include "absl/strings/strip.h"
+#include "tensorflow/stream_executor/platform/port.h"
+
+#include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/stream_executor/lib/demangle.h"
 #include "tensorflow/stream_executor/platform.h"
 #include "tensorflow/stream_executor/platform/logging.h"
-#include "tensorflow/stream_executor/platform/port.h"
 #include "tensorflow/stream_executor/stream_executor.h"
 
 namespace stream_executor {
@@ -90,12 +90,16 @@ KernelCacheConfig KernelBase::GetPreferredCacheConfig() const {
   return implementation_->GetPreferredCacheConfig();
 }
 
-void KernelBase::set_name(absl::string_view name) {
-  name_ = std::string(name);
+// Prefix stub functions emitted by the CUDA splitter.
+static const char *kStubPrefix = "__device_stub_";
 
-  // CUDA splitter prefixes stub functions with __device_stub_.
-  demangled_name_ =
-      port::Demangle(absl::StripPrefix(name, "__device_stub_").data());
+void KernelBase::set_name(port::StringPiece name) {
+  name_ = string(name);
+  port::StringPiece stubless_name = name;
+  if (tensorflow::str_util::StartsWith(name, kStubPrefix)) {
+    stubless_name.remove_prefix(strlen(kStubPrefix));
+  }
+  demangled_name_ = port::Demangle(stubless_name.data());
 }
 
 }  // namespace stream_executor

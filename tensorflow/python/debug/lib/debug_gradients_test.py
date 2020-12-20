@@ -18,6 +18,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import shutil
 import tempfile
 
 from tensorflow.core.protobuf import config_pb2
@@ -28,7 +29,6 @@ from tensorflow.python.debug.lib import debug_gradients
 from tensorflow.python.debug.lib import debug_utils
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import test_util
-from tensorflow.python.lib.io import file_io
 from tensorflow.python.ops import gradients_impl
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import variables
@@ -36,7 +36,6 @@ from tensorflow.python.platform import googletest
 from tensorflow.python.training import gradient_descent
 
 
-@test_util.run_v1_only("Sessions are not available in TF 2.x")
 class IdentifyGradientTest(test_util.TensorFlowTestCase):
 
   def setUp(self):
@@ -119,8 +118,8 @@ class IdentifyGradientTest(test_util.TensorFlowTestCase):
   def testCallingIdentifyGradientTwiceWithTheSameGradientsDebuggerErrors(self):
     grad_debugger = debug_gradients.GradientsDebugger()
     grad_debugger.identify_gradient(self.w)
-    with self.assertRaisesRegex(ValueError,
-                                "The graph already contains an op named .*"):
+    with self.assertRaisesRegexp(ValueError,
+                                 "The graph already contains an op named .*"):
       grad_debugger.identify_gradient(self.w)
 
   def testIdentifyGradientWorksOnMultipleLosses(self):
@@ -162,18 +161,18 @@ class IdentifyGradientTest(test_util.TensorFlowTestCase):
     # registered.
     gradients_impl.gradients(y, [self.u, self.v])
 
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         LookupError,
         r"This GradientsDebugger has not received any gradient tensor for "):
       grad_debugger_1.gradient_tensor(self.w)
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         LookupError,
         r"This GradientsDebugger has not received any gradient tensor for "):
       grad_debugger_2.gradient_tensor(self.w)
 
   def testIdentifyGradientRaisesTypeErrorForNonTensorOrTensorNameInput(self):
     grad_debugger = debug_gradients.GradientsDebugger()
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         TypeError,
         r"x_tensor must be a str or tf\.Tensor or tf\.Variable, but instead "
         r"has type .*Operation.*"):
@@ -370,14 +369,14 @@ class IdentifyGradientTest(test_util.TensorFlowTestCase):
     self.assertEqual(1, len(u_grad_values))
     self.assertAllClose(30.0, u_grad_values[0])
 
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         LookupError,
         r"This GradientsDebugger has not received any gradient tensor for "
         r"x-tensor v:0"):
       debug_gradients.gradient_values_from_dump(grad_debugger, self.v, dump)
 
     # Cleanup.
-    file_io.delete_recursively(dump_dir)
+    shutil.rmtree(dump_dir)
 
 
 if __name__ == "__main__":

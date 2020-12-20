@@ -1,4 +1,10 @@
 op {
   graph_op_name: "Rsqrt"
-  visibility: HIDDEN
+  endpoint {
+    name: "math.rsqrt"
+  }
+  endpoint {
+    name: "rsqrt"
+    deprecated: true
+  }
 }

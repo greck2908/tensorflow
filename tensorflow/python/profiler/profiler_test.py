@@ -21,7 +21,6 @@ import os
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.client import session
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import gfile
 from tensorflow.python.platform import test
@@ -36,7 +35,6 @@ builder = option_builder.ProfileOptionBuilder
 
 class ProfilerTest(test.TestCase):
 
-  @test_util.run_deprecated_v1
   def testProfileBasic(self):
     ops.reset_default_graph()
     outfile = os.path.join(test.get_temp_dir(), 'dump')
@@ -111,7 +109,7 @@ class ProfilerTest(test.TestCase):
     opts = builder.time_and_memory(min_bytes=0)
 
     with session.Session() as sess:
-      r1, r2, r3 = lib.BuildSplittableModel()
+      r1, r2, r3 = lib.BuildSplitableModel()
       sess.run(variables.global_variables_initializer())
 
       profiler = model_analyzer.Profiler(sess.graph)
@@ -173,7 +171,6 @@ class ProfilerTest(test.TestCase):
       checker = advice_pb.checkers['ExpensiveOperationChecker']
       self.assertGreater(len(checker.reports), 0)
 
-  @test_util.run_deprecated_v1
   def testMultipleProfilePerStep(self):
     ops.reset_default_graph()
     opts = (builder(builder.trainable_variables_parameter())

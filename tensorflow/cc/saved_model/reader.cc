@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <unordered_set>
 
-#include "absl/memory/memory.h"
 #include "tensorflow/cc/saved_model/constants.h"
 #include "tensorflow/core/lib/io/path.h"
 #include "tensorflow/core/lib/strings/str_util.h"
@@ -49,12 +48,12 @@ Status ReadSavedModel(const string& export_dir, SavedModel* saved_model_proto) {
                     export_dir);
 }
 
-Status FindMetaGraphDef(const std::unordered_set<string>& tags,
-                        SavedModel* saved_model_proto,
+Status FindMetaGraphDef(const SavedModel& saved_model_proto,
+                        const std::unordered_set<string>& tags,
                         MetaGraphDef* meta_graph_def) {
-  LOG(INFO) << "Reading meta graph with tags { " << absl::StrJoin(tags, " ")
+  LOG(INFO) << "Reading meta graph with tags { " << str_util::Join(tags, " ")
             << " }";
-  for (MetaGraphDef& graph_def : *saved_model_proto->mutable_meta_graphs()) {
+  for (const MetaGraphDef& graph_def : saved_model_proto.meta_graphs()) {
     // Get tags from the graph_def.
     std::unordered_set<string> graph_tags;
     for (const string& tag : graph_def.meta_info_def().tags()) {
@@ -62,7 +61,7 @@ Status FindMetaGraphDef(const std::unordered_set<string>& tags,
     }
     // Match with the set of tags provided.
     if (graph_tags == tags) {
-      *meta_graph_def = std::move(graph_def);
+      *meta_graph_def = graph_def;
       return Status::OK();
     }
   }
@@ -70,7 +69,7 @@ Status FindMetaGraphDef(const std::unordered_set<string>& tags,
       error::Code::NOT_FOUND,
       strings::StrCat(
           "Could not find meta graph def matching supplied tags: { ",
-          absl::StrJoin(tags, " "),
+          str_util::Join(tags, " "),
           " }. To inspect available tag-sets in the SavedModel, please "
           "use the SavedModel CLI: `saved_model_cli`"));
 }
@@ -82,26 +81,7 @@ Status ReadMetaGraphDefFromSavedModel(const string& export_dir,
                                       MetaGraphDef* const meta_graph_def) {
   SavedModel saved_model_proto;
   TF_RETURN_IF_ERROR(ReadSavedModel(export_dir, &saved_model_proto));
-  TF_RETURN_IF_ERROR(
-      FindMetaGraphDef(tags, &saved_model_proto, meta_graph_def));
-  return Status::OK();
-}
-
-Status ReadSavedModelDebugInfoIfPresent(
-    const string& export_dir,
-    std::unique_ptr<GraphDebugInfo>* debug_info_proto) {
-  LOG(INFO) << "Reading SavedModel debug info (if present) from: "
-            << export_dir;
-
-  const string debug_info_pb_path =
-      io::JoinPath(export_dir, "debug", "saved_model_debug_info.pb");
-  if (Env::Default()->FileExists(debug_info_pb_path).ok()) {
-    GraphDebugInfo debug_info;
-    TF_RETURN_IF_ERROR(
-        ReadBinaryProto(Env::Default(), debug_info_pb_path, &debug_info));
-    *debug_info_proto =
-        absl::make_unique<GraphDebugInfo>(std::move(debug_info));
-  }
+  TF_RETURN_IF_ERROR(FindMetaGraphDef(saved_model_proto, tags, meta_graph_def));
   return Status::OK();
 }
 

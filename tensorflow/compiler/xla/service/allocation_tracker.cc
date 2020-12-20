@@ -20,14 +20,13 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/xla/map_util.h"
+#include "tensorflow/compiler/xla/service/device_memory_allocator.h"
 #include "tensorflow/compiler/xla/service/transfer_manager.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/compiler/xla/util.h"
-#include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
 
 namespace xla {
 
@@ -64,6 +63,15 @@ StatusOr<GlobalDataHandle> AllocationTracker::RegisterInternal(
   VLOG(2) << "RegisterInternal("
           << "tag: \"" << tag << "\" with " << replicated_buffers.size()
           << " shaped_buffers.";
+  for (const auto& shaped_buffer : replicated_buffers) {
+    VLOG(2) << "shaped_buffer:" << shaped_buffer;
+    if (shaped_buffer.platform() != backend_->platform()) {
+      return InvalidArgument(
+          "AllocationTracker for platform %s cannot register buffer from "
+          "platform %s",
+          backend_->platform()->Name(), shaped_buffer.platform()->Name());
+    }
+  }
 
   int64 handle = next_handle_++;
   for (auto& shaped_buffer : replicated_buffers) {
@@ -134,10 +142,13 @@ StatusOr<std::vector<GlobalDataHandle>> AllocationTracker::DeconstructTuple(
   // We only need to care about replica id 0 here, since the GlobalDataHandle is
   // the same for all buffers across replicas.
   const ShapedBuffer* shaped_buffer = replicated_buffers[0];
-  if (!shaped_buffer->on_device_shape().IsTuple()) {
+  if (!ShapeUtil::IsTuple(shaped_buffer->on_host_shape())) {
     return InvalidArgument("global data handle %d is not a tuple",
                            data.handle());
   }
+  // If the on-host representation is a tuple, then the on-device one should be
+  // as well.
+  TF_RET_CHECK(ShapeUtil::IsTuple(shaped_buffer->on_device_shape()));
 
   if (ShapeUtil::IsNestedTuple(shaped_buffer->on_device_shape())) {
     return Unimplemented("Deconstructing nested tuples is not implemented.");
@@ -148,8 +159,9 @@ StatusOr<std::vector<GlobalDataHandle>> AllocationTracker::DeconstructTuple(
        i < ShapeUtil::TupleElementCount(shaped_buffer->on_device_shape());
        ++i) {
     auto element_buffer = ShapedBuffer(
+        ShapeUtil::GetTupleElementShape(shaped_buffer->on_host_shape(), i),
         ShapeUtil::GetTupleElementShape(shaped_buffer->on_device_shape(), i),
-        shaped_buffer->device_ordinal());
+        shaped_buffer->platform(), shaped_buffer->device_ordinal());
     element_buffer.set_buffer(shaped_buffer->buffer(/*index=*/{i}),
                               /*index=*/{});
     std::vector<ShapedBuffer> replicated_buffers;
@@ -209,8 +221,8 @@ void AllocationTracker::AddAllocationOrIncrementRefCount(
   auto it = allocation_map.find(device_memory.opaque());
   if (it == allocation_map.end()) {
     allocation_map[device_memory.opaque()] = {
-        se::OwningDeviceMemory(device_memory, device_ordinal,
-                               backend_->memory_allocator()),
+        OwningDeviceMemory(device_memory, device_ordinal,
+                           backend_->memory_allocator()),
         /*ref_count=*/1};
   } else {
     it->second.ref_count++;
@@ -225,7 +237,7 @@ Status AllocationTracker::DecrementRefCount(se::DeviceMemoryBase device_memory,
   Allocation& allocation = it->second;
   TF_RET_CHECK(allocation.ref_count >= 1);
   if (allocation.ref_count == 1) {
-    TF_RETURN_IF_ERROR(allocation.device_memory.Free());
+    allocation.device_memory.Free();
     allocation_map.erase(it);
   } else {
     allocation.ref_count--;

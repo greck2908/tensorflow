@@ -21,10 +21,26 @@ limitations under the License.
 #endif
 
 namespace xla {
+Status LLVMCompiler::RunHloPassesOnModuleGroup(
+    HloModuleGroup* module_group, se::StreamExecutor* executor,
+    DeviceMemoryAllocator* device_allocator) {
+  return Unimplemented(
+      "Model partitioning not implemented for the CPU/GPU compilers!");
+}
+
+StatusOr<std::vector<std::unique_ptr<Executable>>>
+LLVMCompiler::RunBackendOnModuleGroup(
+    std::unique_ptr<HloModuleGroup> module_group,
+    std::vector<std::vector<se::StreamExecutor*>> stream_exec,
+    DeviceMemoryAllocator* device_allocator) {
+  return Unimplemented(
+      "Model partitioning not implemented for the CPU/GPU compilers!");
+}
+
 StatusOr<std::vector<std::unique_ptr<Executable>>> LLVMCompiler::Compile(
     std::unique_ptr<HloModuleGroup> module_group,
     std::vector<std::vector<se::StreamExecutor*>> stream_execs,
-    const CompileOptions& options) {
+    DeviceMemoryAllocator* device_allocator) {
   // Tensorflow tries to enable the following behaviors in all its threads:
   //
   //  - Denormals are zero (DAZ): roughly, operations treat denormal floats as
@@ -48,10 +64,10 @@ StatusOr<std::vector<std::unique_ptr<Executable>>> LLVMCompiler::Compile(
 
     TF_ASSIGN_OR_RETURN(modules[i],
                         RunHloPasses(std::move(modules[i]), stream_execs[i][0],
-                                     options.device_allocator));
+                                     device_allocator));
     TF_ASSIGN_OR_RETURN(std::unique_ptr<Executable> executable,
                         RunBackend(std::move(modules[i]), stream_execs[i][0],
-                                   options.device_allocator));
+                                   device_allocator));
     result.push_back(std::move(executable));
   }
 

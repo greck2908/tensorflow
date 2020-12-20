@@ -18,7 +18,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import string_ops
 from tensorflow.python.platform import test
 
@@ -30,10 +29,9 @@ class StringLengthOpTest(test.TestCase):
 
     with self.cached_session() as sess:
       lengths = string_ops.string_length(strings)
-      values = self.evaluate(lengths)
+      values = sess.run(lengths)
       self.assertAllEqual(values, [[[1, 2], [3, 4], [5, 6]]])
 
-  @test_util.run_deprecated_v1
   def testUnit(self):
     unicode_strings = [u"H\xc3llo", u"\U0001f604"]
     utf8_strings = [s.encode("utf-8") for s in unicode_strings]
@@ -45,22 +43,21 @@ class StringLengthOpTest(test.TestCase):
       utf8_char_lengths = string_ops.string_length(
           utf8_strings, unit="UTF8_CHAR")
       self.assertAllEqual(
-          self.evaluate(utf8_byte_lengths), expected_utf8_byte_lengths)
+          sess.run(utf8_byte_lengths), expected_utf8_byte_lengths)
       self.assertAllEqual(
-          self.evaluate(utf8_char_lengths), expected_utf8_char_lengths)
-      with self.assertRaisesRegex(
+          sess.run(utf8_char_lengths), expected_utf8_char_lengths)
+      with self.assertRaisesRegexp(
           ValueError, "Attr 'unit' of 'StringLength' Op passed string 'XYZ' "
           'not in: "BYTE", "UTF8_CHAR"'):
         string_ops.string_length(utf8_strings, unit="XYZ")
 
-  @test_util.run_deprecated_v1
   def testLegacyPositionalName(self):
     # Code that predates the 'unit' parameter may have used a positional
     # argument for the 'name' parameter.  Check that we don't break such code.
     strings = [[["1", "12"], ["123", "1234"], ["12345", "123456"]]]
     lengths = string_ops.string_length(strings, "some_name")
     with self.session():
-      self.assertAllEqual(lengths, [[[1, 2], [3, 4], [5, 6]]])
+      self.assertAllEqual(lengths.eval(), [[[1, 2], [3, 4], [5, 6]]])
 
 
 if __name__ == "__main__":

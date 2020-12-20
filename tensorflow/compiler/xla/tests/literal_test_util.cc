@@ -18,7 +18,6 @@ limitations under the License.
 #include "absl/strings/str_format.h"
 #include "tensorflow/compiler/xla/literal_comparison.h"
 #include "tensorflow/core/lib/io/path.h"
-#include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/test.h"
 
 namespace xla {
@@ -27,30 +26,25 @@ namespace {
 
 // Writes the given literal to a file in the test temporary directory.
 void WriteLiteralToTempFile(const LiteralSlice& literal, const string& name) {
-  // Bazel likes for tests to write "debugging outputs" like these to
-  // TEST_UNDECLARED_OUTPUTS_DIR.  This plays well with tools that inspect test
-  // results, especially when they're run on remote machines.
-  string outdir;
-  if (!tensorflow::io::GetTestUndeclaredOutputsDir(&outdir)) {
-    outdir = tensorflow::testing::TmpDir();
-  }
-
-  auto* env = tensorflow::Env::Default();
+  auto get_hostname = [] {
+    char hostname[1024];
+    gethostname(hostname, sizeof hostname);
+    hostname[sizeof hostname - 1] = 0;
+    return string(hostname);
+  };
+  int64 now_usec = tensorflow::Env::Default()->NowMicros();
   string filename = tensorflow::io::JoinPath(
-      outdir, absl::StrFormat("tempfile-%d-%s", env->NowMicros(), name));
-  TF_CHECK_OK(tensorflow::WriteBinaryProto(env, absl::StrCat(filename, ".pb"),
+      tensorflow::testing::TmpDir(),
+      absl::StrFormat("tempfile-%s-%x-%s", get_hostname(), now_usec, name));
+  TF_CHECK_OK(tensorflow::WriteBinaryProto(tensorflow::Env::Default(), filename,
                                            literal.ToProto()));
-  TF_CHECK_OK(tensorflow::WriteStringToFile(env, absl::StrCat(filename, ".txt"),
-                                            literal.ToString()));
-  LOG(ERROR) << "wrote Literal to " << name << " file: " << filename
-             << ".{pb,txt}";
+  LOG(ERROR) << "wrote to " << name << " file: " << filename;
 }
 
 // Callback helper that dumps literals to temporary files in the event of a
 // miscomparison.
 void OnMiscompare(const LiteralSlice& expected, const LiteralSlice& actual,
-                  const LiteralSlice& mismatches,
-                  const ShapeIndex& /*shape_index*/) {
+                  const LiteralSlice& mismatches) {
   LOG(INFO) << "expected: " << ShapeUtil::HumanString(expected.shape()) << " "
             << literal_comparison::ToStringTruncated(expected);
   LOG(INFO) << "actual:   " << ShapeUtil::HumanString(actual.shape()) << " "
@@ -92,7 +86,7 @@ void OnMiscompare(const LiteralSlice& expected, const LiteralSlice& actual,
 
 /* static */ ::testing::AssertionResult LiteralTestUtil::Near(
     const LiteralSlice& expected, const LiteralSlice& actual,
-    const ErrorSpec& error_spec, absl::optional<bool> detailed_message) {
+    const ErrorSpec& error_spec, bool detailed_message) {
   return StatusToAssertion(literal_comparison::Near(
       expected, actual, error_spec, detailed_message, &OnMiscompare));
 }
@@ -103,8 +97,7 @@ void OnMiscompare(const LiteralSlice& expected, const LiteralSlice& actual,
   if (error.has_value()) {
     VLOG(1) << "Expects near";
     return StatusToAssertion(literal_comparison::Near(
-        expected, actual, *error, /*detailed_message=*/absl::nullopt,
-        &OnMiscompare));
+        expected, actual, *error, /*detailed_message=*/false, &OnMiscompare));
   }
   VLOG(1) << "Expects equal";
   return StatusToAssertion(literal_comparison::Equal(expected, actual));

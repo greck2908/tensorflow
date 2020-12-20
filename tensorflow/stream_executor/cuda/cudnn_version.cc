@@ -16,21 +16,25 @@ limitations under the License.
 #include "tensorflow/stream_executor/cuda/cudnn_version.h"
 
 namespace stream_executor {
-namespace gpu {
+namespace cuda {
 
 bool IsSourceCompatibleWithCudnnLibrary(CudnnVersion source_version,
                                         CudnnVersion loaded_version) {
   // Major version is neither forward or backward compatible and therefore major
   // versions needs to match between source and library.
   //
-  // Minor version is backward-compatible and therefore minor version of library
-  // needs to be same or higher.
+  // Minor version is backward-compatible beginning with CuDNN 7 and therefore
+  // minor version of library needs to be same or higher.
   //
   // Patch releases are always forward and backward compatible and therefore
   // need not match.
-  return loaded_version.major_version == source_version.major_version &&
-         loaded_version.minor_version >= source_version.minor_version;
+  if (loaded_version.major_version != source_version.major_version) {
+    return false;
+  }
+  return ((loaded_version.minor_version == source_version.minor_version) ||
+          (source_version.major_version >= 7 &&
+           loaded_version.minor_version >= source_version.minor_version));
 }
 
-}  // namespace gpu
+}  // namespace cuda
 }  // namespace stream_executor

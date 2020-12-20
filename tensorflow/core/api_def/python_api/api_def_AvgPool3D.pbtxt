@@ -1,4 +1,6 @@
 op {
   graph_op_name: "AvgPool3D"
-  visibility: HIDDEN
+  endpoint {
+    name: "nn.avg_pool3d"
+  }
 }

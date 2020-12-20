@@ -23,10 +23,10 @@ import pickle
 import warnings
 
 from tensorflow.core.lib.core import error_codes_pb2
+from tensorflow.python import pywrap_tensorflow
 from tensorflow.python.framework import c_api_util
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import errors_impl
-from tensorflow.python.lib.io import _pywrap_file_io
 from tensorflow.python.platform import test
 from tensorflow.python.util import compat
 
@@ -70,10 +70,6 @@ class ErrorsTest(test.TestCase):
           isinstance(
               errors_impl._make_specific_exception(None, None, None,
                                                    error_code), exc_type))
-      # error_code_from_exception_type and exception_type_from_error_code should
-      # be consistent with operation result.
-      self.assertEqual(error_code,
-                       errors_impl.error_code_from_exception_type(exc_type))
       # pylint: enable=protected-access
 
   def testKnownErrorClassForEachErrorCodeInProto(self):
@@ -102,17 +98,11 @@ class ErrorsTest(test.TestCase):
     self.assertTrue("Unknown error code: 37" in str(w[0].message))
     self.assertTrue(isinstance(exc, errors_impl.OpError))
 
-    with warnings.catch_warnings(record=True) as w:
-      # pylint: disable=protected-access
-      exc = errors_impl.error_code_from_exception_type("Unknown")
-      # pylint: enable=protected-access
-    self.assertEqual(1, len(w))
-    self.assertTrue("Unknown class exception" in str(w[0].message))
-    self.assertTrue(isinstance(exc, errors_impl.OpError))
-
   def testStatusDoesNotLeak(self):
     try:
-      _pywrap_file_io.DeleteFile(compat.as_bytes("/DOES_NOT_EXIST/"))
+      with errors.raise_exception_on_not_ok_status() as status:
+        pywrap_tensorflow.DeleteFile(
+            compat.as_bytes("/DOES_NOT_EXIST/"), status)
     except:
       pass
     gc.collect()

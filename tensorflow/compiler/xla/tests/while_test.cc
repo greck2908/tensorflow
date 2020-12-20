@@ -861,9 +861,9 @@ XLA_TEST_F(WhileTest, WhileWithDynamicUpdateSlice) {
     // Update.
     auto update = ConvertElementType(Broadcast(out0, {2}), F32);
     // Starts = iteration * 2;
-    auto starts = Mul(iteration, ConstantR0<int32>(&builder, 2));
+    auto starts = Reshape(Mul(iteration, ConstantR0<int32>(&builder, 2)), {1});
     // UpdateSlice.
-    auto out1 = DynamicUpdateSlice(input, update, {starts});
+    auto out1 = DynamicUpdateSlice(input, update, starts);
 
     Tuple(&builder, {out0, out1});
     body = builder.Build().ConsumeValueOrDie();
@@ -901,7 +901,7 @@ XLA_TEST_F(WhileTest, WhileWithDynamicUpdateSlice) {
 // Per backend the values generated can be different as the different backends
 // use different random number generators.
 // TODO(b/32240857): Extend test to verify outputs.
-XLA_TEST_F(WhileTest, WhileWithPrngScalarResult) {
+XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileWithPrngScalarResult)) {
   auto v6s32 = ShapeUtil::MakeShape(S32, {6});
 
   // Create a computation for the condition: repeat for count iterations.
@@ -1146,7 +1146,7 @@ XLA_TEST_F(WhileTest, NestedWhileWithScalarResult) {
 // while (f(result).get<0>()) {
 //   result = result + 1;
 // }
-XLA_TEST_F(WhileTest, WhileWithCallInsideCondition) {
+XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileWithCallInsideCondition)) {
   auto result_shape = ShapeUtil::MakeShape(S32, {});
 
   // Create a computation for the condition: repeat for 5 iterations.
@@ -1259,12 +1259,13 @@ XLA_TEST_F(WhileTest, DISABLED_ON_INTERPRETER(WhileInfeedCondition)) {
   ComputeAndCompareR0<int32>(&builder, 2, {});
 }
 
-void BM_WhileLoop(::testing::benchmark::State& state) {
+void BM_WhileLoop(int num_iters) {
   // Benchmark a simple kernel to measure while loop overheads.
+  tensorflow::testing::StopTiming();
 
   se::Platform* platform = PlatformUtil::GetDefaultPlatform().ValueOrDie();
   auto executors = PlatformUtil::GetStreamExecutors(platform).ValueOrDie();
-  se::StreamExecutorMemoryAllocator allocator(platform, executors);
+  StreamExecutorMemoryAllocator allocator(platform, executors);
   LocalClient* client =
       ClientLibrary::GetOrCreateLocalClient(platform).ValueOrDie();
 
@@ -1298,9 +1299,9 @@ void BM_WhileLoop(::testing::benchmark::State& state) {
     auto one = ConstantR0<float>(&builder, 1.0);
     auto update = Broadcast(one, {1, 1024, 1024});
     // Starts = iteration * 2;
-    auto zero = ConstantR0<int32>(&builder, 0);
+    auto starts = ConstantR1<int32>(&builder, {0, 0, 0});
     // UpdateSlice.
-    auto out1 = DynamicUpdateSlice(input, update, {zero, zero, zero});
+    auto out1 = DynamicUpdateSlice(input, update, starts);
     Tuple(&builder, {out0, out1});
     body = builder.Build().ConsumeValueOrDie();
   }
@@ -1313,25 +1314,23 @@ void BM_WhileLoop(::testing::benchmark::State& state) {
   While(condition, body, init);
   auto computation = builder.Build().ConsumeValueOrDie();
 
-  TF_ASSERT_OK_AND_ASSIGN(
-      auto executables,
-      client->Compile(computation, {}, ExecutableBuildOptions()));
-  auto executable = std::move(executables[0]);
+  std::unique_ptr<LocalExecutable> executable =
+      client->Compile(computation, {}, ExecutableBuildOptions())
+          .ConsumeValueOrDie();
 
   // Run some warm-up executions.
   ExecutableRunOptions options;
   options.set_allocator(&allocator);
   const int kWarmups = 2;
   for (int i = 0; i < kWarmups; ++i) {
-    auto result =
-        executable->Run(absl::Span<const ShapedBuffer* const>(), options);
+    auto result = executable->Run({}, options);
     ASSERT_TRUE(result.ok());
   }
 
   // Run benchmark.
-  for (auto s : state) {
-    auto result =
-        executable->Run(absl::Span<const ShapedBuffer* const>(), options);
+  tensorflow::testing::StartTiming();
+  for (int i = 0; i < num_iters; ++i) {
+    auto result = executable->Run({}, options);
     ASSERT_TRUE(result.ok());
   }
 }

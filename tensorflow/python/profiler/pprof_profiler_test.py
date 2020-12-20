@@ -24,7 +24,6 @@ from proto import profile_pb2
 from tensorflow.core.framework import step_stats_pb2
 from tensorflow.core.protobuf import config_pb2
 from tensorflow.python.framework import constant_op
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.platform import test
@@ -40,10 +39,10 @@ class PprofProfilerTest(test.TestCase):
     graph.get_operations.return_value = []
 
     profiles = pprof_profiler.get_profiles(graph, run_metadata)
-    self.assertEqual(0, len(profiles))
+    self.assertEquals(0, len(profiles))
     profile_files = pprof_profiler.profile(
         graph, run_metadata, output_dir)
-    self.assertEqual(0, len(profile_files))
+    self.assertEquals(0, len(profile_files))
 
   def testRunMetadataEmpty(self):
     output_dir = test.get_temp_dir()
@@ -56,10 +55,10 @@ class PprofProfilerTest(test.TestCase):
     graph.get_operations.return_value = [op1]
 
     profiles = pprof_profiler.get_profiles(graph, run_metadata)
-    self.assertEqual(0, len(profiles))
+    self.assertEquals(0, len(profiles))
     profile_files = pprof_profiler.profile(
         graph, run_metadata, output_dir)
-    self.assertEqual(0, len(profile_files))
+    self.assertEquals(0, len(profile_files))
 
   def testValidProfile(self):
     output_dir = test.get_temp_dir()
@@ -123,20 +122,19 @@ comment: 9
 """
     # Test with protos
     profiles = pprof_profiler.get_profiles(graph, run_metadata)
-    self.assertEqual(1, len(profiles))
+    self.assertEquals(1, len(profiles))
     self.assertTrue('deviceA' in profiles)
-    self.assertEqual(expected_proto, str(profiles['deviceA']))
+    self.assertEquals(expected_proto, str(profiles['deviceA']))
     # Test with files
     profile_files = pprof_profiler.profile(
         graph, run_metadata, output_dir)
-    self.assertEqual(1, len(profile_files))
+    self.assertEquals(1, len(profile_files))
     with gzip.open(profile_files[0]) as profile_file:
       profile_contents = profile_file.read()
       profile = profile_pb2.Profile()
       profile.ParseFromString(profile_contents)
-      self.assertEqual(expected_proto, str(profile))
+      self.assertEquals(expected_proto, str(profile))
 
-  @test_util.run_v1_only('b/120545219')
   def testProfileWithWhileLoop(self):
     options = config_pb2.RunOptions()
     options.trace_level = config_pb2.RunOptions.FULL_TRACE
@@ -150,16 +148,16 @@ comment: 9
       r = control_flow_ops.while_loop(c, b, [i])
       sess.run(r, options=options, run_metadata=run_metadata)
       profiles = pprof_profiler.get_profiles(sess.graph, run_metadata)
-      self.assertEqual(1, len(profiles))
+      self.assertEquals(1, len(profiles))
       profile = next(iter(profiles.values()))
       add_samples = []  # Samples for the while/Add node
       for sample in profile.sample:
         if profile.string_table[sample.label[0].str] == 'while/Add':
           add_samples.append(sample)
       # Values for same nodes are aggregated.
-      self.assertEqual(1, len(add_samples))
+      self.assertEquals(1, len(add_samples))
       # Value of "count" should be equal to number of iterations.
-      self.assertEqual(num_iters, add_samples[0].value[0])
+      self.assertEquals(num_iters, add_samples[0].value[0])
 
 
 if __name__ == '__main__':

@@ -17,7 +17,6 @@ limitations under the License.
 
 #include "tensorflow/core/framework/device_base.h"
 #include "tensorflow/core/framework/op_def.pb.h"
-#include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
 #include "tensorflow/core/util/ptr_util.h"
 
@@ -27,7 +26,6 @@ namespace graph_utils {
 namespace {
 
 constexpr char kConstOpName[] = "Const";
-constexpr char kRetValOp[] = "_Retval";
 
 template <typename Predicate, typename Collection>
 std::vector<int> GetElementIndicesWithPredicate(const Predicate& predicate,
@@ -74,7 +72,7 @@ NodeDef* AddScalarConstNodeHelper(
     MutableGraphView* graph) {
   NodeDef node;
   node.set_op(kConstOpName);
-  SetUniqueGraphNodeName(kConstOpName, graph->graph(), &node);
+  SetUniqueGraphNodeName(kConstOpName, graph->GetGraph(), &node);
 
   (*node.mutable_attr())["dtype"].set_type(dtype);
   std::unique_ptr<tensorflow::TensorProto> tensor =
@@ -94,7 +92,7 @@ NodeDef* AddScalarConstNodeHelper(
 NodeDef* AddScalarPlaceholder(DataType dtype, MutableGraphView* graph) {
   NodeDef node;
   node.set_op("Placeholder");
-  SetUniqueGraphNodeName(node.op(), graph->graph(), &node);
+  SetUniqueGraphNodeName(node.op(), graph->GetGraph(), &node);
   (*node.mutable_attr())["dtype"].set_type(dtype);
   TensorShapeProto* shape = (*node.mutable_attr())["shape"].mutable_shape();
   shape->set_unknown_rank(false);
@@ -109,13 +107,13 @@ NodeDef* AddNode(StringPiece name, StringPiece op,
   if (!name.empty()) {
     node.set_name(string(name));
   } else {
-    SetUniqueGraphNodeName(op, graph->graph(), &node);
+    SetUniqueGraphNodeName(op, graph->GetGraph(), &node);
   }
   node.set_op(string(op));
   for (const string& input : inputs) {
     node.add_input(input);
   }
-  for (const auto& attr : attributes) {
+  for (auto attr : attributes) {
     (*node.mutable_attr())[attr.first] = attr.second;
   }
   return graph->AddNode(std::move(node));
@@ -157,46 +155,6 @@ NodeDef* AddScalarConstNode(StringPiece v, MutableGraphView* graph) {
       DT_STRING,
       [v](TensorProto* proto) { proto->add_string_val(v.data(), v.size()); },
       graph);
-}
-
-Status GetScalarConstNodeValueHelper(
-    const NodeDef& node, DataType dtype,
-    const std::function<void(const Tensor&)>& get_value) {
-  if (node.op() != kConstOpName)
-    return errors::InvalidArgument("Node ", node.name(),
-                                   " is not a Const node. Op: ", node.op());
-
-  Tensor tensor;
-  TF_RETURN_IF_ERROR(GetNodeAttr(node, "value", &tensor));
-  if (!TensorShapeUtils::IsScalar(tensor.shape())) {
-    return errors::InvalidArgument(
-        "Node ", node.name(),
-        " should be a scalar but has shape: ", tensor.shape());
-  }
-
-  if (tensor.dtype() != dtype) {
-    return errors::InvalidArgument(
-        "Node ", node.name(), " should have type ", DataTypeString(dtype),
-        " but has type: ", DataTypeString(tensor.dtype()));
-  }
-
-  get_value(tensor);
-
-  return Status::OK();
-}
-
-template <>
-Status GetScalarConstNodeValue(const NodeDef& node, int64* value) {
-  return GetScalarConstNodeValueHelper(
-      node, DT_INT64,
-      [value](const Tensor& tensor) { *value = tensor.scalar<int64>()(); });
-}
-
-template <>
-Status GetScalarConstNodeValue(const NodeDef& node, bool* value) {
-  return GetScalarConstNodeValueHelper(
-      node, DT_BOOL,
-      [value](const Tensor& tensor) { *value = tensor.scalar<bool>()(); });
 }
 
 bool Compare(const GraphDef& g1, const GraphDef& g2) {
@@ -270,27 +228,8 @@ std::vector<int> FindAllGraphNodesWithOp(const string& op,
 
 NodeDef* GetInputNode(const NodeDef& node, const MutableGraphView& graph) {
   if (node.input_size() == 0) return nullptr;
-  MutableGraphView::InputPort input_port = graph.GetInputPort(node.name(), 0);
+  GraphView::InputPort input_port = graph.GetInputPort(node.name(), 0);
   return graph.GetRegularFanin(input_port).node;
-}
-
-NodeDef* GetInputNode(const NodeDef& node, const MutableGraphView& graph,
-                      int64 i) {
-  if (node.input_size() <= i) return nullptr;
-  MutableGraphView::InputPort input_port = graph.GetInputPort(node.name(), i);
-  return graph.GetRegularFanin(input_port).node;
-}
-
-Status GetDatasetOutputTypesAttr(const NodeDef& node,
-                                 DataTypeVector* output_types) {
-  // We don't name the output_types attr consistently, so should check for both.
-  for (const string& attr_name : {"output_types", "Toutput_types"}) {
-    if (node.attr().contains(attr_name)) {
-      return GetNodeAttr(node, attr_name, output_types);
-    }
-  }
-  return errors::InvalidArgument("Could not find output_types attr for node: ",
-                                 node.name(), " with op: ", node.op());
 }
 
 void SetUniqueGraphNodeName(StringPiece prefix, GraphDef* graph,
@@ -354,33 +293,6 @@ Status EnsureNodeNamesUnique(Graph* g) {
 
   return Status::OK();
 }
-
-Status GetFetchNode(const MutableGraphView& graph, const GrapplerItem& item,
-                    NodeDef** fetch_node) {
-  if (item.fetch.size() != 1) {
-    return errors::InvalidArgument(
-        "Expected only one fetch node but there were ", item.fetch.size(), ": ",
-        absl::StrJoin(item.fetch, ", "));
-  }
-
-  *fetch_node = graph.GetNode(item.fetch.at(0));
-
-  return Status::OK();
-}
-
-bool IsItemDerivedFromFunctionDef(const GrapplerItem& item,
-                                  const MutableGraphView& graph_view) {
-  for (const auto& fetch_name : item.fetch) {
-    auto fetch = graph_view.GetNode(fetch_name);
-    if (fetch != nullptr && fetch->op() != kRetValOp) {
-      // We found a fetch node which is not a `Retval` op.
-      return false;
-    }
-  }
-  // All fetch nodes are `Retval` ops (or we don't have any fetch nodes).
-  return true;
-}
-
-}  // namespace graph_utils
-}  // namespace grappler
-}  // namespace tensorflow
+}  // end namespace graph_utils
+}  // end namespace grappler
+}  // end namespace tensorflow

@@ -31,11 +31,14 @@ limitations under the License.
 #include "tensorflow/core/protobuf/worker.pb.h"
 
 namespace grpc {
+class CompletionQueue;
+class Channel;
+class RpcService;
+class ServerCompletionQueue;
+class ServerContext;
 
 // Support parsing/unparsing of tensorflow::TensorResponse.
 // Wire-format is identical to RecvTensorResponse.
-// This is specializing an existing template, so it's okay to do this in a
-// namespace that we don't own.
 template <>
 class SerializationTraits<tensorflow::TensorResponse> {
  public:
@@ -63,7 +66,6 @@ class SerializationTraits<tensorflow::TensorResponse> {
     return result;
   }
 };
-
 }  // namespace grpc
 
 namespace tensorflow {
@@ -85,11 +87,9 @@ enum class GrpcWorkerMethod {
   kCompleteGroup,
   kCompleteInstance,
   kGetStepSequence,
-  kMarkRecvFinished,
 };
-
 static const int kGrpcNumWorkerMethods =
-    static_cast<int>(GrpcWorkerMethod::kMarkRecvFinished) + 1;
+    static_cast<int>(GrpcWorkerMethod::kGetStepSequence) + 1;
 
 const char* GrpcWorkerMethodName(GrpcWorkerMethod id);
 

@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "tensorflow/core/grappler/optimizers/data/filter_fusion.h"
 
-#include "absl/container/flat_hash_set.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/grappler/clusters/cluster.h"
@@ -38,7 +37,7 @@ NodeDef MakeFusedFilterNode(const NodeDef& first_filter_node,
                             const FunctionDef& fused_function,
                             MutableGraphView* graph) {
   NodeDef fused_node;
-  graph_utils::SetUniqueGraphNodeName("fused_filter", graph->graph(),
+  graph_utils::SetUniqueGraphNodeName("fused_filter", graph->GetGraph(),
                                       &fused_node);
 
   fused_node.set_op("FilterDataset");
@@ -58,26 +57,23 @@ NodeDef MakeFusedFilterNode(const NodeDef& first_filter_node,
 
 }  // namespace
 
-Status FilterFusion::OptimizeAndCollectStats(Cluster* cluster,
-                                             const GrapplerItem& item,
-                                             GraphDef* output,
-                                             OptimizationStats* stats) {
+Status FilterFusion::Optimize(Cluster* cluster, const GrapplerItem& item,
+                              GraphDef* output) {
   GraphDef sorted_old_graph = item.graph;
   TF_RETURN_IF_ERROR(TopologicalSort(&sorted_old_graph));
   *output = sorted_old_graph;
 
   MutableGraphView graph(output);
-  absl::flat_hash_set<string> nodes_to_delete;
+  std::set<string> nodes_to_delete;
   FunctionLibraryDefinition function_library(OpRegistry::Global(),
                                              output->library());
 
   auto get_filter_node = [](const NodeDef& node) -> const NodeDef* {
-    // TODO(b/148614315): Support captured inputs.
-    if (node.op() == "FilterDataset" && node.input_size() == 1) return &node;
+    if (node.op() == "FilterDataset") return &node;
     return nullptr;
   };
 
-  auto make_fused_function =
+  auto get_fused_predicate =
       [&](const NodeDef* first_filter_node,
           const NodeDef* second_filter_node) -> FunctionDef* {
     const auto& parent_fun = first_filter_node->attr().at("predicate");
@@ -108,21 +104,24 @@ Status FilterFusion::OptimizeAndCollectStats(Cluster* cluster,
     if (!first_filter_node) continue;
 
     const auto* fused_predicate =
-        make_fused_function(first_filter_node, second_filter_node);
+        get_fused_predicate(first_filter_node, second_filter_node);
     if (!fused_predicate) continue;
     const auto* fused_filter_node = graph.AddNode(MakeFusedFilterNode(
         *first_filter_node, *second_filter_node, *fused_predicate, &graph));
 
-    TF_RETURN_IF_ERROR(graph.UpdateFanouts(second_filter_node->name(),
-                                           fused_filter_node->name()));
+    graph.ReplaceInput(*second_filter_node, *fused_filter_node);
 
+    // TODO(prazek): we should run some optimizations on the fused filter
+    // functions, or make sure that optimization passes run after filter
+    // fusion.
     TF_RETURN_IF_ERROR(function_library.AddFunctionDef(*fused_predicate));
+    // TODO(b/116285210): we could also remove map functions from library if
+    // they are not used anymore.
     nodes_to_delete.insert(first_filter_node->name());
     nodes_to_delete.insert(second_filter_node->name());
-    stats->num_changes++;
   }
 
-  TF_RETURN_IF_ERROR(graph.DeleteNodes(nodes_to_delete));
+  graph.DeleteNodes(nodes_to_delete);
   return Status::OK();
 }
 
@@ -133,5 +132,5 @@ void FilterFusion::Feedback(Cluster* cluster, const GrapplerItem& item,
 
 REGISTER_GRAPH_OPTIMIZER_AS(FilterFusion, "filter_fusion");
 
-}  // namespace grappler
-}  // namespace tensorflow
+}  // end namespace grappler
+}  // end namespace tensorflow

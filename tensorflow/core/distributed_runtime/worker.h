@@ -20,7 +20,6 @@ limitations under the License.
 
 #include "tensorflow/core/distributed_runtime/graph_mgr.h"
 #include "tensorflow/core/distributed_runtime/partial_run_mgr.h"
-#include "tensorflow/core/distributed_runtime/recent_request_ids.h"
 #include "tensorflow/core/distributed_runtime/session_mgr.h"
 #include "tensorflow/core/distributed_runtime/worker_interface.h"
 
@@ -29,7 +28,7 @@ namespace tensorflow {
 class CancellationManager;
 class Device;
 struct WorkerEnv;
-class WorkerSession;
+struct WorkerSession;
 
 // A TensorFlow Worker runs registered graphs and supports worker-to-worker
 // Tensor transfer.
@@ -45,8 +44,8 @@ class Worker : public WorkerInterface {
   Worker(WorkerEnv* env);
   virtual ~Worker() {}
 
-  void GetStatusAsync(CallOptions* opts, const GetStatusRequest* request,
-                      GetStatusResponse* response, bool fail_fast,
+  void GetStatusAsync(const GetStatusRequest* request,
+                      GetStatusResponse* response,
                       StatusCallback done) override;
 
   void CreateWorkerSessionAsync(const CreateWorkerSessionRequest* request,
@@ -110,7 +109,6 @@ class Worker : public WorkerInterface {
 
  protected:
   WorkerEnv* const env_;  // Not owned.
-  RecentRequestIds recent_request_ids_;
 
   Status PrepareRecvTensor(const Rendezvous::ParsedKey& parsed,
                            Device** src_dev);

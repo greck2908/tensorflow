@@ -44,10 +44,10 @@ REGISTER_OP("XRTReleaseCompilationHandle")
     .SetShapeFn(tensorflow::shape_inference::NoOutputs)
     .Doc(
         R"(
-Discards one or more computation handles from the compilation cache.
-The handle(s) cannot be subsequently used.
+Discards a computation from the compilation cache. The handle cannot be
+subsequently used.
 
-'handle' is an ID (or vector of IDs) returned from a XRTCompile Op.
+'handle' is an id returned from a XRTCompile Op.
 )");
 
 }  // namespace tensorflow

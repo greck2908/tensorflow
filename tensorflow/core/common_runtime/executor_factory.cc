@@ -48,13 +48,13 @@ void ExecutorFactory::Register(const string& executor_type,
 
 namespace {
 const string RegisteredFactoriesErrorMessageLocked()
-    TF_SHARED_LOCKS_REQUIRED(executor_factory_lock) {
+    SHARED_LOCKS_REQUIRED(executor_factory_lock) {
   std::vector<string> factory_types;
   for (const auto& executor_factory : *executor_factories()) {
     factory_types.push_back(executor_factory.first);
   }
   return strings::StrCat("Registered factories are {",
-                         absl::StrJoin(factory_types, ", "), "}.");
+                         str_util::Join(factory_types, ", "), "}.");
 }
 }  // namespace
 
@@ -74,7 +74,8 @@ Status ExecutorFactory::GetFactory(const string& executor_type,
 }
 
 Status NewExecutor(const string& executor_type,
-                   const LocalExecutorParams& params, const Graph& graph,
+                   const LocalExecutorParams& params,
+                   std::unique_ptr<const Graph> graph,
                    std::unique_ptr<Executor>* out_executor) {
   ExecutorFactory* factory = nullptr;
   TF_RETURN_IF_ERROR(ExecutorFactory::GetFactory(executor_type, &factory));

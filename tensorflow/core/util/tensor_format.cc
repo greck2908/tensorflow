@@ -63,8 +63,6 @@ string ToString(FilterTensorFormat format) {
       return "HWIO";
     case FORMAT_OIHW:
       return "OIHW";
-    case FORMAT_OHWI:
-      return "OHWI";
     case FORMAT_OIHW_VECT_I:
       return "OIHW_VECT_I";
     default:
@@ -73,7 +71,7 @@ string ToString(FilterTensorFormat format) {
   }
 }
 
-bool FormatFromString(absl::string_view format_str, TensorFormat* format) {
+bool FormatFromString(const string& format_str, TensorFormat* format) {
   if (format_str == "NHWC" || format_str == "NDHWC") {
     *format = FORMAT_NHWC;
     return true;
@@ -101,7 +99,7 @@ bool FormatFromString(absl::string_view format_str, TensorFormat* format) {
   return false;
 }
 
-bool FilterFormatFromString(absl::string_view format_str,
+bool FilterFormatFromString(const string& format_str,
                             FilterTensorFormat* format) {
   if (format_str == "HWIO" || format_str == "DHWIO") {
     *format = FORMAT_HWIO;

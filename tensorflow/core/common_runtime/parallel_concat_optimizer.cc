@@ -13,6 +13,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "tensorflow/core/common_runtime/graph_optimizer.h"
+
+#include "tensorflow/core/common_runtime/constant_folding.h"
+#include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/common_runtime/optimization_registry.h"
 #include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/graph/node_builder.h"
@@ -48,11 +52,10 @@ class ParallelConcatRemovePass : public GraphOptimizationPass {
       AttrSlice n_attrs = n->attrs();
       auto base_make_node = [n, &n_attrs](const string& op,
                                           const string& name) {
-        NodeDebugInfo debug_info(*n);
-        NodeBuilder node_builder(name, op, OpRegistry::Global(), &debug_info);
+        NodeBuilder node_builder(name, op);
         node_builder.Device(n->requested_device());
-        const string& colo = GetNodeAttrString(n_attrs, "_class");
-        if (!colo.empty()) {
+        string colo;
+        if (GetNodeAttr(n_attrs, "_class", &colo).ok()) {
           node_builder.Attr("_class", colo);
         }
         return node_builder;
@@ -75,6 +78,7 @@ class ParallelConcatRemovePass : public GraphOptimizationPass {
 
       // Add all the inplace_updates.
       std::vector<Node*> control_nodes;
+      int64 i = 0;
       for (const Edge* input_edge : n->in_edges()) {
         if (input_edge->IsControlEdge()) {
           g->AddControlEdge(input_edge->src(), start);
@@ -84,11 +88,13 @@ class ParallelConcatRemovePass : public GraphOptimizationPass {
         Node* update;
         TF_RETURN_IF_ERROR(
             make_node("_ParallelConcatUpdate")
-                .Attr("loc", input_edge->dst_input())
+                .Attr("loc", i)
                 .Input(start)
                 .Input(input_edge->src(), input_edge->src_output())
                 .Finalize(g, &update));
         control_nodes.push_back(update);
+
+        ++i;
       }
 
       // Add the final identity.
@@ -113,7 +119,7 @@ class ParallelConcatRemovePass : public GraphOptimizationPass {
     return Status::OK();
   }
 };
-REGISTER_OPTIMIZATION(OptimizationPassRegistry::PRE_PLACEMENT, 10,
+REGISTER_OPTIMIZATION(OptimizationPassRegistry::PRE_PLACEMENT, 0,
                       ParallelConcatRemovePass);
 
 }  // namespace

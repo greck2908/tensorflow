@@ -21,17 +21,17 @@ namespace tensorflow {
 namespace io {
 
 BufferedInputStream::BufferedInputStream(InputStreamInterface* input_stream,
-                                         size_t buffer_bytes,
+                                         size_t buffer_size,
                                          bool owns_input_stream)
     : input_stream_(input_stream),
-      size_(buffer_bytes),
+      size_(buffer_size),
       owns_input_stream_(owns_input_stream) {
   buf_.reserve(size_);
 }
 
 BufferedInputStream::BufferedInputStream(RandomAccessFile* file,
-                                         size_t buffer_bytes)
-    : BufferedInputStream(new RandomAccessInputStream(file), buffer_bytes,
+                                         size_t buffer_size)
+    : BufferedInputStream(new RandomAccessInputStream(file), buffer_size,
                           true) {}
 
 BufferedInputStream::~BufferedInputStream() {
@@ -49,15 +49,14 @@ Status BufferedInputStream::FillBuffer() {
   Status s = input_stream_->ReadNBytes(size_, &buf_);
   pos_ = 0;
   limit_ = buf_.size();
-  if (!s.ok()) {
+  if (buf_.empty()) {
+    DCHECK(!s.ok());
     file_status_ = s;
   }
   return s;
 }
 
-template <typename StringType>
-Status BufferedInputStream::ReadLineHelper(StringType* result,
-                                           bool include_eol) {
+Status BufferedInputStream::ReadLineHelper(string* result, bool include_eol) {
   result->clear();
   Status s;
   while (true) {
@@ -71,13 +70,13 @@ Status BufferedInputStream::ReadLineHelper(StringType* result,
     char c = buf_[pos_++];
     if (c == '\n') {
       if (include_eol) {
-        result->append(1, c);
+        *result += c;
       }
       return Status::OK();
     }
     // We don't append '\r' to *result
     if (c != '\r') {
-      result->append(1, c);
+      *result += c;
     }
   }
   if (errors::IsOutOfRange(s) && !result->empty()) {
@@ -86,13 +85,13 @@ Status BufferedInputStream::ReadLineHelper(StringType* result,
   return s;
 }
 
-Status BufferedInputStream::ReadNBytes(int64 bytes_to_read, tstring* result) {
+Status BufferedInputStream::ReadNBytes(int64 bytes_to_read, string* result) {
   if (bytes_to_read < 0) {
     return errors::InvalidArgument("Can't read a negative number of bytes: ",
                                    bytes_to_read);
   }
   result->clear();
-  if (pos_ == limit_ && !file_status_.ok() && bytes_to_read > 0) {
+  if (!file_status_.ok() && bytes_to_read > 0) {
     return file_status_;
   }
   result->reserve(bytes_to_read);
@@ -168,8 +167,7 @@ Status BufferedInputStream::Seek(int64 position) {
   return SkipNBytes(position - bufpos);
 }
 
-template <typename T>
-Status BufferedInputStream::ReadAll(T* result) {
+Status BufferedInputStream::ReadAll(string* result) {
   result->clear();
   Status status;
   while (status.ok()) {
@@ -188,9 +186,6 @@ Status BufferedInputStream::ReadAll(T* result) {
   return status;
 }
 
-template Status BufferedInputStream::ReadAll<string>(string* result);
-template Status BufferedInputStream::ReadAll<tstring>(tstring* result);
-
 Status BufferedInputStream::Reset() {
   TF_RETURN_IF_ERROR(input_stream_->Reset());
   pos_ = 0;
@@ -200,10 +195,6 @@ Status BufferedInputStream::Reset() {
 }
 
 Status BufferedInputStream::ReadLine(string* result) {
-  return ReadLineHelper(result, false);
-}
-
-Status BufferedInputStream::ReadLine(tstring* result) {
   return ReadLineHelper(result, false);
 }
 

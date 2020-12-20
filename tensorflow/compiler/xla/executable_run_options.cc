@@ -15,22 +15,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/executable_run_options.h"
 
-#include <atomic>
-
 namespace xla {
-
-RunId::RunId() {
-  static std::atomic<int64> counter{0};
-  data_ = counter.fetch_add(1);
-}
-
-bool operator==(const RunId& a, const RunId& b) { return a.data_ == b.data_; }
-
-std::string RunId::ToString() const {
-  return "RunId: " + std::to_string(data_);
-}
-
-int64 RunId::ToInt() const { return data_; }
 
 ExecutableRunOptions& ExecutableRunOptions::set_device_ordinal(
     int device_ordinal) {
@@ -41,13 +26,12 @@ ExecutableRunOptions& ExecutableRunOptions::set_device_ordinal(
 int ExecutableRunOptions::device_ordinal() const { return device_ordinal_; }
 
 ExecutableRunOptions& ExecutableRunOptions::set_allocator(
-    stream_executor::DeviceMemoryAllocator* allocator) {
+    DeviceMemoryAllocator* allocator) {
   allocator_ = allocator;
   return *this;
 }
 
-stream_executor::DeviceMemoryAllocator* ExecutableRunOptions::allocator()
-    const {
+DeviceMemoryAllocator* ExecutableRunOptions::allocator() const {
   return allocator_;
 }
 
@@ -93,7 +77,7 @@ ExecutionProfile* ExecutableRunOptions::execution_profile() const {
 }
 
 ExecutableRunOptions& ExecutableRunOptions::set_device_assignment(
-    const DeviceAssignment* device_assignment) {
+    DeviceAssignment* device_assignment) {
   device_assignment_ = device_assignment;
   return *this;
 }
@@ -102,29 +86,11 @@ const DeviceAssignment* ExecutableRunOptions::device_assignment() const {
   return device_assignment_;
 }
 
-ExecutableRunOptions& ExecutableRunOptions::set_gpu_executable_run_options(
-    const gpu::GpuExecutableRunOptions* gpu_executable_run_options) {
-  gpu_executable_run_options_ = gpu_executable_run_options;
-  return *this;
-}
-
-const gpu::GpuExecutableRunOptions*
-ExecutableRunOptions::gpu_executable_run_options() const {
-  return gpu_executable_run_options_;
-}
-
 ExecutableRunOptions& ExecutableRunOptions::set_rng_seed(int rng_seed) {
   rng_seed_ = rng_seed;
   return *this;
 }
 
 int ExecutableRunOptions::rng_seed() const { return rng_seed_; }
-
-ExecutableRunOptions& ExecutableRunOptions::set_run_id(RunId id) {
-  run_id_ = id;
-  return *this;
-}
-
-RunId ExecutableRunOptions::run_id() const { return run_id_; }
 
 }  // namespace xla

@@ -22,7 +22,7 @@ namespace tensorflow {
 
 namespace {
 
-// This TensorFlow op supports the Assert primitive.
+// This TensorFlow op supports the Assert primitve.
 class AssertOp : public XlaOpKernel {
  public:
   explicit AssertOp(OpKernelConstruction* ctx) : XlaOpKernel(ctx) {}
@@ -43,7 +43,7 @@ class AssertOp : public XlaOpKernel {
   TF_DISALLOW_COPY_AND_ASSIGN(AssertOp);
 };
 
-REGISTER_XLA_OP(Name("Assert").CompilationOnly(), AssertOp);
+REGISTER_XLA_OP(Name("Assert"), AssertOp);
 
 }  // anonymous namespace
 }  // namespace tensorflow

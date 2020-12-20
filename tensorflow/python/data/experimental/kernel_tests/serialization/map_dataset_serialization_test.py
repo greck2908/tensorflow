@@ -17,13 +17,10 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from absl.testing import parameterized
 import numpy as np
 
 from tensorflow.python.data.experimental.kernel_tests.serialization import dataset_serialization_test_base
-from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -36,8 +33,7 @@ from tensorflow.python.platform import test
 
 
 class MapDatasetSerializationTest(
-    dataset_serialization_test_base.DatasetSerializationTestBase,
-    parameterized.TestCase):
+    dataset_serialization_test_base.DatasetSerializationTestBase):
 
   def setUp(self):
     self._tensor_slice_len = 7
@@ -56,24 +52,24 @@ class MapDatasetSerializationTest(
         dataset_ops.Dataset.from_tensor_slices(components).map(_map_fn)
         .repeat(self._num_epochs))
 
-  @combinations.generate(test_base.default_test_combinations())
   def testSaveRestoreCore(self):
-    self.run_core_tests(self._build_ds, self._num_outputs)
+    self.run_core_tests(
+        self._build_ds,
+        lambda: self._build_ds(multiplier=15.0),
+        self._num_outputs)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testSaveStatefulFunction(self):
 
     def _build_ds():
 
       def _map_fn(x):
         return random_ops.random_uniform(
-            (), 0, 10, dtype=dtypes.int32) * math_ops.cast(x, dtypes.int32)
+            (), 0, 10, dtype=dtypes.int32) * math_ops.to_int32(x)
 
       return dataset_ops.Dataset.range(100).map(_map_fn)
 
-    self.verify_error_on_save(_build_ds, 15, errors.FailedPreconditionError)
+    self.verify_error_on_save(_build_ds, 15, errors.InvalidArgumentError)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCaptureVariableInMapFn(self):
 
     def _build_ds():
@@ -82,9 +78,8 @@ class MapDatasetSerializationTest(
       return (dataset_ops.Dataset.from_tensors(0).repeat(10).map(
           lambda _: counter_var.assign_add(1)))
 
-    self.verify_error_on_save(_build_ds, 15, errors.FailedPreconditionError)
+    self.verify_error_on_save(_build_ds, 15, errors.InvalidArgumentError)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCaptureConstantInMapFn(self):
 
     def _build_ds():
@@ -92,9 +87,8 @@ class MapDatasetSerializationTest(
       return (dataset_ops.Dataset.from_tensors(0).repeat(10).map(
           lambda x: x + constant_var))
 
-    self.run_core_tests(_build_ds, 10)
+    self.run_core_tests(_build_ds, None, 10)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCaptureDefunInMapFn(self):
     num_outputs = 100
 
@@ -102,13 +96,12 @@ class MapDatasetSerializationTest(
 
       @function.Defun(dtypes.int64)
       def defun_fn(x):
-        return constant_op.constant(1000) + math_ops.cast(x, dtypes.int32)
+        return constant_op.constant(1000) + math_ops.to_int32(x)
 
       return dataset_ops.Dataset.range(num_outputs).map(defun_fn)
 
-    self.run_core_tests(_build_ds, num_outputs)
+    self.run_core_tests(_build_ds, None, num_outputs)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testBuildDefunInMapFn(self):
     num_outputs = 100
 
@@ -119,16 +112,14 @@ class MapDatasetSerializationTest(
 
         @function.Defun(dtypes.int32)
         def defun_fn_deep(x):
-          return constant_op.constant(1000) + math_ops.cast(x, dtypes.int32)
+          return constant_op.constant(1000) + math_ops.to_int32(x)
 
-        return constant_op.constant(11000) + defun_fn_deep(
-            math_ops.cast(x, dtypes.int32))
+        return constant_op.constant(11000) + defun_fn_deep(math_ops.to_int32(x))
 
       return dataset_ops.Dataset.range(num_outputs).map(defun_fn)
 
-    self.run_core_tests(_build_ds, num_outputs)
+    self.run_core_tests(_build_ds, None, num_outputs)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testSparseCore(self):
 
     def _sparse(i):
@@ -141,7 +132,8 @@ class MapDatasetSerializationTest(
       return dataset_ops.Dataset.range(num_outputs).map(_sparse)
 
     num_outputs = 10
-    self.run_core_tests(lambda: _build_ds(num_outputs), num_outputs)
+    self.run_core_tests(lambda: _build_ds(num_outputs),
+                        lambda: _build_ds(int(num_outputs / 2)), num_outputs)
 
 
 if __name__ == "__main__":

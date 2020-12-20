@@ -230,10 +230,10 @@ HloDomainMap::MakeNonDomainInstructions(
     }
   }
   // sort instructions according to instructions_order
-  absl::c_sort(instructions,
-               [&instructions_order](HloInstruction* a, HloInstruction* b) {
-                 return instructions_order.at(a) < instructions_order.at(b);
-               });
+  std::sort(instructions.begin(), instructions.end(),
+            [&instructions_order](HloInstruction* a, HloInstruction* b) {
+              return instructions_order.at(a) < instructions_order.at(b);
+            });
   return instructions;
 }
 

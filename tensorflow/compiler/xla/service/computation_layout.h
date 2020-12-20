@@ -77,8 +77,6 @@ class ComputationLayout {
   // Sets layouts of all parameters and the result to the default layout.
   void SetToDefaultLayout();
 
-  void SetToDefaultLayoutIfEmpty();
-
   // Returns true if all layouts (parameters and result) have been set.
   bool LayoutIsSet() const;
 
@@ -88,10 +86,6 @@ class ComputationLayout {
   // Create a ProgramShape proto based on the parameter and result shapes held
   // within this object.
   ProgramShape ComputeProgramShape() const;
-
-  bool operator==(const ComputationLayout& other) const;
-  bool operator!=(const ComputationLayout& other) const;
-  uint64 Hash() const;
 
  private:
   std::vector<ShapeLayout> parameter_layouts_;

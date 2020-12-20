@@ -84,7 +84,7 @@ public class SavedModelBundle implements AutoCloseable {
    * <p>This method is a shorthand for:
    *
    * <pre>{@code
-   * SavedModelBundle.loader().withTags(tags).load();
+   * SavedModelBundler.loader().withTags(tags).load();
    * }</pre>
    *
    * @param exportDir the directory path containing a saved model.

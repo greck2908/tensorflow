@@ -28,7 +28,6 @@ limitations under the License.
 #include "tensorflow/compiler/xla/array3d.h"
 #include "tensorflow/compiler/xla/array4d.h"
 #include "tensorflow/compiler/xla/client/padding.h"
-#include "tensorflow/compiler/xla/service/hlo_evaluator.h"
 #include "tensorflow/compiler/xla/util.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 #include "tensorflow/core/platform/macros.h"
@@ -55,11 +54,12 @@ class ReferenceUtil {
   }
 
   // Returns the result of a matrix multiply `lhs x rhs`.
-  template <typename T>
-  static std::unique_ptr<Array2D<T>> MatmulArray2D(const Array2D<T>& lhs,
-                                                   const Array2D<T>& rhs) {
-    return HloEvaluator::MatmulArray2D(lhs, rhs);
-  }
+  static std::unique_ptr<Array2D<Eigen::half>> MatmulArray2D(
+      const Array2D<Eigen::half>& lhs, const Array2D<Eigen::half>& rhs);
+  static std::unique_ptr<Array2D<float>> MatmulArray2D(
+      const Array2D<float>& lhs, const Array2D<float>& rhs);
+  static std::unique_ptr<Array2D<double>> MatmulArray2D(
+      const Array2D<double>& lhs, const Array2D<double>& rhs);
 
   // Converts the input operand to use f64 values instead of f32 values.
   static std::unique_ptr<Array2D<double>> Array2DF32ToF64(
@@ -180,6 +180,9 @@ class ReferenceUtil {
       absl::Span<const float> operand, float init,
       absl::Span<const int64> window, absl::Span<const int64> stride,
       Padding padding);
+  static std::unique_ptr<Array2D<float>> ReduceWindow2DAdd(
+      const Array2D<float>& operand, float init, absl::Span<const int64> window,
+      absl::Span<const int64> stride, Padding padding);
   static std::unique_ptr<Array3D<float>> ReduceWindow3DAdd(
       const Array3D<float>& operand, float init, absl::Span<const int64> window,
       absl::Span<const int64> stride, Padding padding);
@@ -190,6 +193,11 @@ class ReferenceUtil {
   // Windowed reductions with a generic reduce function.
   static std::unique_ptr<std::vector<float>> ReduceWindow1DGeneric(
       absl::Span<const float> operand, float init,
+      const std::function<float(float, float)>& reduce_func,
+      absl::Span<const int64> window, absl::Span<const int64> stride,
+      absl::Span<const std::pair<int64, int64>> padding);
+  static std::unique_ptr<Array2D<float>> ReduceWindow2DGeneric(
+      const Array2D<float>& operand, float init,
       const std::function<float(float, float)>& reduce_func,
       absl::Span<const int64> window, absl::Span<const int64> stride,
       absl::Span<const std::pair<int64, int64>> padding);

@@ -9,26 +9,18 @@ java_runtime(
 )
 
 platform(
-    name = "rbe_windows_1803_gpu",
+    name = "rbe_windows_1803",
     constraint_values = [
         "@bazel_tools//platforms:x86_64",
         "@bazel_tools//platforms:windows",
     ],
     remote_execution_properties = """
         properties:{
-          name: "container-image"
-          value: ""
+          name:"container-image"
+          value:"docker://gcr.io/tensorflow-testing/tf-rbe-win@sha256:bd22c6bfff6afc1fa4304ec4411df2410d93645494117585332a4e2258358422"
         }
         properties:{
-          name: "sandbox"
-          value: "none"
-        }
-        properties:{
-          name: "OSFamily"
-          value: "Windows"
-        }
-        properties:{
-          name: "Pool" value: "default"
+          name: "OSFamily" value: "Windows"
         }
         """,
 )

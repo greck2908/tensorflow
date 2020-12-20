@@ -26,7 +26,6 @@ from tensorflow.core.protobuf import config_pb2
 from tensorflow.core.protobuf import rewriter_config_pb2
 from tensorflow.python.client import session
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import random_ops
 from tensorflow.python.ops import variables
@@ -50,7 +49,7 @@ def _extract_node(run_meta, node_name):
       dev = dev[dev.find('cpu:'):]
     elif dev.find('gpu:') > 0:
       dev = dev[dev.find('gpu:'):]
-    elif '/host:cpu' not in dev:
+    else:
       assert False, 'Unrecognized device name: %s' % dev
 
     for node_stat in dev_stat.node_stats:
@@ -79,7 +78,7 @@ def _run_model():
     opts['output'] = 'none'
     _ = sess.run(y,
                  options=config_pb2.RunOptions(
-                     trace_level=config_pb2.RunOptions.SOFTWARE_TRACE),
+                     trace_level=config_pb2.RunOptions.FULL_TRACE),
                  run_metadata=run_metadata)
     tfprof_node = model_analyzer.profile(
         sess.graph,
@@ -90,18 +89,14 @@ def _run_model():
 
 
 def _run_loop_model():
-  config = config_pb2.ConfigProto()
-  # Grappler might fuse MatMul with BiasAdd in remapper optimizer.
-  config.graph_options.rewrite_options.remapping = (
-      rewriter_config_pb2.RewriterConfig.OFF)
-  with session.Session(config=config) as sess:
+  with session.Session() as sess:
     x = lib.BuildFullModel()
 
     sess.run(variables.global_variables_initializer())
     run_meta = config_pb2.RunMetadata()
     _ = sess.run(x,
                  options=config_pb2.RunOptions(
-                     trace_level=config_pb2.RunOptions.SOFTWARE_TRACE),
+                     trace_level=config_pb2.RunOptions.FULL_TRACE),
                  run_metadata=run_meta)
 
     opts = builder.time_and_memory()
@@ -115,7 +110,6 @@ def _run_loop_model():
 
 class RunMetadataTest(test.TestCase):
 
-  @test_util.run_deprecated_v1
   def testGPU(self):
     if not test.is_gpu_available(cuda_only=True):
       return
@@ -129,12 +123,8 @@ class RunMetadataTest(test.TestCase):
 
     ret = _extract_node(run_meta, 'MatMul')
     self.assertEqual(len(ret['gpu:0']), 1)
-    if not test.is_built_with_rocm():
-      # skip this check for the ROCm platform
-      # stream level tracing is not yet supported on the ROCm platform
-      self.assertEqual(len(ret['gpu:0/stream:all']), 1, '%s' % run_meta)
+    self.assertEqual(len(ret['gpu:0/stream:all']), 1, '%s' % run_meta)
 
-  @test_util.run_deprecated_v1
   def testAllocationHistory(self):
     if not test.is_gpu_available(cuda_only=True):
       return
@@ -164,7 +154,6 @@ class RunMetadataTest(test.TestCase):
     # deallocates the memory after matmul started.
     self.assertGreater(random_allocs[1].alloc_micros, mm.all_start_micros)
 
-  @test_util.run_deprecated_v1
   def testCPU(self):
     ops.reset_default_graph()
     with ops.device('/cpu:0'):
@@ -178,7 +167,6 @@ class RunMetadataTest(test.TestCase):
     ret = _extract_node(run_meta, 'MatMul:MatMul')
     self.assertEqual(len(ret), 0)
 
-  @test_util.run_v1_only('b/120545219')
   def testLoopCPU(self):
     ops.reset_default_graph()
     with ops.device('/cpu:0'):
@@ -208,7 +196,7 @@ class RunMetadataTest(test.TestCase):
     graph = ops.get_default_graph()
     forward_op = set()
     backward_op = set()
-    back_to_forward = {}
+    back_to_forward = dict()
     for op in graph.get_operations():
       if op.name.find('gradients/') > 0 and op.name.find('_grad/') > 0:
         backward_op.add(op.name)
@@ -237,11 +225,7 @@ class RunMetadataTest(test.TestCase):
       for node in ret['gpu:0']:
         total_cpu_execs += node.op_end_rel_micros
 
-      if not test.is_built_with_rocm():
-        # skip this check for the ROCm platform
-        # stream level tracing is not yet supported on the ROCm platform
-        self.assertGreaterEqual(
-            len(ret['gpu:0/stream:all']), 4, '%s' % run_meta)
+      self.assertGreaterEqual(len(ret['gpu:0/stream:all']), 4, '%s' % run_meta)
 
 
 if __name__ == '__main__':

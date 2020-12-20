@@ -33,14 +33,16 @@ class HostToDeviceCopyThunk : public Thunk {
   // Constructs a CopyThunk that copies host data from `source_address` to the
   // device buffer `destination_buffer`. `mem_size` is the size of the data in
   // bytes.
-  HostToDeviceCopyThunk(ThunkInfo thunk_info, const void* source_address,
+  HostToDeviceCopyThunk(const void* source_address,
                         const BufferAllocation::Slice& destination_buffer,
-                        uint64 mem_size);
+                        uint64 mem_size, const HloInstruction* hlo_instruction);
 
   HostToDeviceCopyThunk(const HostToDeviceCopyThunk&) = delete;
   HostToDeviceCopyThunk& operator=(const HostToDeviceCopyThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                         se::Stream* stream,
+                         HloExecutionProfiler* profiler) override;
 
  private:
   const void* source_address_;
@@ -54,15 +56,17 @@ class DeviceToDeviceCopyThunk : public Thunk {
   // Constructs a CopyThunk that copies host data from `source_buffer` to the
   // device buffer `destination_buffer`. `mem_size` is the size of the data in
   // bytes.
-  DeviceToDeviceCopyThunk(ThunkInfo thunk_info,
-                          const BufferAllocation::Slice& source_buffer,
+  DeviceToDeviceCopyThunk(const BufferAllocation::Slice& source_buffer,
                           const BufferAllocation::Slice& destination_buffer,
-                          uint64 mem_size);
+                          uint64 mem_size,
+                          const HloInstruction* hlo_instruction);
 
   DeviceToDeviceCopyThunk(const DeviceToDeviceCopyThunk&) = delete;
   DeviceToDeviceCopyThunk& operator=(const DeviceToDeviceCopyThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                         se::Stream* stream,
+                         HloExecutionProfiler* profiler) override;
 
  private:
   const BufferAllocation::Slice source_buffer_;

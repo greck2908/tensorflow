@@ -16,7 +16,6 @@ limitations under the License.
 #include "tensorflow/core/grappler/optimizers/graph_optimizer_stage.h"
 
 #include "tensorflow/cc/ops/standard_ops.h"
-#include "tensorflow/core/framework/function_testlib.h"
 #include "tensorflow/core/grappler/costs/graph_properties.h"
 #include "tensorflow/core/grappler/grappler_item.h"
 #include "tensorflow/core/platform/test.h"
@@ -25,9 +24,6 @@ limitations under the License.
 namespace tensorflow {
 namespace grappler {
 namespace {
-
-using ::tensorflow::test::function::GDef;
-using ::tensorflow::test::function::NDef;
 
 class GraphOptimizerStageTest : public ::testing::Test {};
 
@@ -48,23 +44,23 @@ class FakeOptimizerStage : public GraphOptimizerStage<FakeResult> {
   }
 };
 
-TEST_F(GraphOptimizerStageTest, ParseNodeNameAndScopeInRoot) {
+TEST_F(GraphOptimizerStageTest, ParseNodeNameAndScope_InRoot) {
   const auto scope_and_name = ParseNodeScopeAndName("Add");
-  EXPECT_EQ(scope_and_name.scope, "");
-  EXPECT_EQ(scope_and_name.name, "Add");
+  EXPECT_EQ("", scope_and_name.scope);
+  EXPECT_EQ("Add", scope_and_name.name);
 }
 
-TEST_F(GraphOptimizerStageTest, ParseNodeNameAndScopeInScope) {
+TEST_F(GraphOptimizerStageTest, ParseNodeNameAndScope_InScope) {
   const auto scope_and_name = ParseNodeScopeAndName("a/b/c/Add");
-  EXPECT_EQ(scope_and_name.scope, "a/b/c");
-  EXPECT_EQ(scope_and_name.name, "Add");
+  EXPECT_EQ("a/b/c", scope_and_name.scope);
+  EXPECT_EQ("Add", scope_and_name.name);
 }
 
 TEST_F(GraphOptimizerStageTest, OptimizedNodeName) {
   GraphOptimizerContext ctx(/*nodes_to_preserve*/ nullptr,
                             /*optimized_graph*/ nullptr,
                             /*graph_properties*/ nullptr,
-                            /*node_map*/ nullptr,
+                            /*node_name*/ nullptr,
                             /*feed_nodes*/ nullptr,
                             /*opt_level*/ RewriterConfig::ON);
   FakeOptimizerStage stage("my_opt", "my_stg", ctx);
@@ -72,70 +68,15 @@ TEST_F(GraphOptimizerStageTest, OptimizedNodeName) {
   const auto node = ParseNodeScopeAndName("a/b/c/Add");
 
   // Without rewrite rule
-  EXPECT_EQ(stage.OptimizedNodeName(node), "a/b/c/my_opt/my_stg_Add");
-  EXPECT_EQ(stage.OptimizedNodeName(node, std::vector<string>({"Mul", "Sqrt"})),
-            "a/b/c/my_opt/my_stg_Add_Mul_Sqrt");
+  EXPECT_EQ("a/b/c/my_opt/my_stg_Add", stage.OptimizedNodeName(node));
+  EXPECT_EQ(
+      "a/b/c/my_opt/my_stg_Add_Mul_Sqrt",
+      stage.OptimizedNodeName(node, std::vector<string>({"Mul", "Sqrt"})));
 
   // With rewrite rule
   const string rewrite = "my_rewrite";
-  EXPECT_EQ(stage.OptimizedNodeName(node, rewrite),
-            "a/b/c/my_opt/my_stg_my_rewrite_Add");
-}
-
-TEST_F(GraphOptimizerStageTest, UniqueOptimizedNodeName) {
-  GraphDef graph =
-      GDef({NDef("a/b/c/A", "NotImportant", {}),
-            NDef("a/b/c/my_opt/my_stg_A", "NotImportant", {}),
-            NDef("a/b/c/my_opt/my_stg_my_rewrite_A", "NotImportant", {})},
-           /*funcs=*/{});
-
-  NodeMap node_map(&graph);
-  GraphOptimizerContext ctx(/*nodes_to_preserve*/ nullptr,
-                            /*optimized_graph*/ nullptr,
-                            /*graph_properties*/ nullptr,
-                            /*node_map*/ &node_map,
-                            /*feed_nodes*/ nullptr,
-                            /*opt_level*/ RewriterConfig::ON);
-  FakeOptimizerStage stage("my_opt", "my_stg", ctx);
-
-  const auto node = ParseNodeScopeAndName("a/b/c/A");
-
-  EXPECT_EQ(stage.UniqueOptimizedNodeName(node),
-            "a/b/c/my_opt/my_stg_A_unique0");
-
-  // With rewrite rule
-  const string rewrite = "my_rewrite";
-  EXPECT_EQ(stage.UniqueOptimizedNodeName(node, rewrite),
-            "a/b/c/my_opt/my_stg_my_rewrite_A_unique1");
-}
-
-TEST_F(GraphOptimizerStageTest, UniqueOptimizedNodeNameWithUsedNodeNames) {
-  GraphDef graph = GDef(
-      {NDef("a/b/c/A", "NotImportant", {}),
-       NDef("a/b/c/my_opt/my_stg_A", "NotImportant", {}),
-       NDef("a/b/c/my_opt/my_stg_A_unique0", "NotImportant", {}),
-       NDef("a/b/c/my_opt/my_stg_my_rewrite_A", "NotImportant", {}),
-       NDef("a/b/c/my_opt/my_stg_my_rewrite_A_unique1", "NotImportant", {})},
-      /*funcs=*/{});
-
-  NodeMap node_map(&graph);
-  GraphOptimizerContext ctx(/*nodes_to_preserve*/ nullptr,
-                            /*optimized_graph*/ nullptr,
-                            /*graph_properties*/ nullptr,
-                            /*node_map*/ &node_map,
-                            /*feed_nodes*/ nullptr,
-                            /*opt_level*/ RewriterConfig::ON);
-  FakeOptimizerStage stage("my_opt", "my_stg", ctx);
-
-  const auto node = ParseNodeScopeAndName("a/b/c/A");
-
-  EXPECT_EQ(stage.UniqueOptimizedNodeName(node),
-            "a/b/c/my_opt/my_stg_A_unique1");
-
-  // With rewrite rule
-  const string rewrite = "my_rewrite";
-  EXPECT_EQ(stage.UniqueOptimizedNodeName(node, rewrite),
-            "a/b/c/my_opt/my_stg_my_rewrite_A_unique2");
+  EXPECT_EQ("a/b/c/my_opt/my_stg_my_rewrite_Add",
+            stage.OptimizedNodeName(node, rewrite));
 }
 
 TEST_F(GraphOptimizerStageTest, GetInputNodeAndProperties) {
@@ -156,28 +97,27 @@ TEST_F(GraphOptimizerStageTest, GetInputNodeAndProperties) {
   GraphOptimizerContext ctx(/*nodes_to_preserve*/ nullptr,
                             /*optimized_graph*/ &item.graph,
                             /*graph_properties*/ &properties,
-                            /*node_map*/ &node_map,
+                            /*node_name*/ &node_map,
                             /*feed_nodes*/ nullptr,
                             /*opt_level*/ RewriterConfig::ON);
   FakeOptimizerStage stage("my_opt", "my_stg", ctx);
 
   NodeDef* add_node;
   TF_CHECK_OK(stage.GetInputNode("Add", &add_node));
-  ASSERT_EQ(add_node->input_size(), 2);
-  EXPECT_EQ(add_node->input(0), "a");
-  EXPECT_EQ(add_node->input(1), "b");
+  EXPECT_EQ("a", add_node->input(0));
+  EXPECT_EQ("b", add_node->input(1));
 
-  const OpInfo::TensorProperties* add_properties;
+  OpInfo::TensorProperties add_properties;
   TF_CHECK_OK(stage.GetTensorProperties("Add", &add_properties));
-  EXPECT_EQ(add_properties->dtype(), DT_FLOAT);
+  EXPECT_EQ(DT_FLOAT, add_properties.dtype());
 
-  const OpInfo::TensorProperties* a_properties;
+  OpInfo::TensorProperties a_properties;
   TF_CHECK_OK(stage.GetTensorProperties("a:0", &a_properties));
-  EXPECT_EQ(a_properties->dtype(), DT_FLOAT_REF);
+  EXPECT_EQ(DT_FLOAT_REF, a_properties.dtype());
 
-  const OpInfo::TensorProperties* b_properties;
+  OpInfo::TensorProperties b_properties;
   TF_CHECK_OK(stage.GetTensorProperties("b:0", &b_properties));
-  EXPECT_EQ(b_properties->dtype(), DT_FLOAT_REF);
+  EXPECT_EQ(DT_FLOAT_REF, b_properties.dtype());
 }
 
 TEST_F(GraphOptimizerStageTest, AddNodes) {
@@ -198,7 +138,7 @@ TEST_F(GraphOptimizerStageTest, AddNodes) {
   GraphOptimizerContext ctx(/*nodes_to_preserve*/ nullptr,
                             /*optimized_graph*/ &item.graph,
                             /*graph_properties*/ &properties,
-                            /*node_map*/ &node_map,
+                            /*node_name*/ &node_map,
                             /*feed_nodes*/ nullptr,
                             /*opt_level*/ RewriterConfig::ON);
   FakeOptimizerStage stage("my_opt", "my_stg", ctx);
@@ -208,11 +148,10 @@ TEST_F(GraphOptimizerStageTest, AddNodes) {
 
   // Add a new copy node
   NodeDef* add_node_copy = stage.AddCopyNode("Add_1", add_node);
-  EXPECT_EQ(add_node_copy->name(), "Add_1");
-  EXPECT_EQ(add_node_copy->op(), "Add");
-  ASSERT_EQ(add_node->input_size(), 2);
-  EXPECT_EQ(add_node_copy->input(0), "a");
-  EXPECT_EQ(add_node_copy->input(1), "b");
+  EXPECT_EQ("Add_1", add_node_copy->name());
+  EXPECT_EQ("Add", add_node_copy->op());
+  EXPECT_EQ("a", add_node_copy->input(0));
+  EXPECT_EQ("b", add_node_copy->input(1));
 
   // It must be available for by-name lookup
   NodeDef* add_node_copy_by_name;
@@ -221,17 +160,12 @@ TEST_F(GraphOptimizerStageTest, AddNodes) {
 
   // Add new empty node
   NodeDef* empty_node = stage.AddEmptyNode("Add_2");
-  EXPECT_EQ(empty_node->name(), "Add_2");
-  EXPECT_EQ(empty_node->input_size(), 0);
+  EXPECT_EQ("Add_2", empty_node->name());
 
   // It must be available for by-name lookup
   NodeDef* empty_node_by_name;
   TF_CHECK_OK(stage.GetInputNode("Add_2", &empty_node_by_name));
   EXPECT_EQ(empty_node, empty_node_by_name);
-
-  // Check that AddEmptyNode adds a unique suffix if the node already exists.
-  NodeDef* unique_empty_node = stage.AddEmptyNode("Add_2");
-  EXPECT_EQ(unique_empty_node->name(), "Add_2_0");
 }
 
 }  // namespace

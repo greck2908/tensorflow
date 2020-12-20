@@ -24,11 +24,9 @@ import com.squareup.javapoet.FieldSpec;
 import com.squareup.javapoet.JavaFile;
 import com.squareup.javapoet.MethodSpec;
 import com.squareup.javapoet.ParameterSpec;
-import com.squareup.javapoet.ParameterizedTypeName;
 import com.squareup.javapoet.TypeName;
 import com.squareup.javapoet.TypeSpec;
 import com.squareup.javapoet.TypeVariableName;
-import com.squareup.javapoet.WildcardTypeName;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.Collections;
@@ -74,7 +72,7 @@ public final class OperatorProcessor extends AbstractProcessor {
 
   @Override
   public SourceVersion getSupportedSourceVersion() {
-    return SourceVersion.latest();
+    return SourceVersion.latestSupported();
   }
 
   @Override
@@ -107,7 +105,7 @@ public final class OperatorProcessor extends AbstractProcessor {
 
     // If there are no annotated elements, claim the annotation but do nothing.
     if (annotated.size() == 0) {
-      return false;
+      return true;
     }
 
     // This processor has to aggregate all op classes in one round, as it generates a single Ops
@@ -122,25 +120,25 @@ public final class OperatorProcessor extends AbstractProcessor {
                 + "One reason this can happen is if other annotation processors generate\n"
                 + "new @Operator source files.");
       }
-      return false;
+      return true;
     }
 
     // Collect all classes tagged with our annotation.
     Multimap<String, MethodSpec> groupedMethods = HashMultimap.create();
     if (!collectOpsMethods(roundEnv, groupedMethods, annotation)) {
-      return false;
+      return true;
     }
 
     // Nothing to do when there are no tagged classes.
     if (groupedMethods.isEmpty()) {
-      return false;
+      return true;
     }
 
     // Validate operator classes and generate Op API.
     writeApi(groupedMethods);
 
     hasRun = true;
-    return false;
+    return true;
   }
 
   @Override
@@ -150,22 +148,12 @@ public final class OperatorProcessor extends AbstractProcessor {
 
   private static final Pattern JAVADOC_TAG_PATTERN =
       Pattern.compile("@(?:param|return|throws|exception|see)\\s+.*");
-  private static final TypeName T_OP = ClassName.get("org.tensorflow.op", "Op");
   private static final TypeName T_OPS = ClassName.get("org.tensorflow.op", "Ops");
   private static final TypeName T_OPERATOR =
       ClassName.get("org.tensorflow.op.annotation", "Operator");
   private static final TypeName T_SCOPE = ClassName.get("org.tensorflow.op", "Scope");
-  private static final TypeName T_EXEC_ENV =
-      ClassName.get("org.tensorflow", "ExecutionEnvironment");
-  private static final TypeName T_EAGER_SESSION = ClassName.get("org.tensorflow", "EagerSession");
+  private static final TypeName T_GRAPH = ClassName.get("org.tensorflow", "Graph");
   private static final TypeName T_STRING = ClassName.get(String.class);
-  // Operand<?>
-  private static final TypeName T_OPERAND =
-      ParameterizedTypeName.get(
-          ClassName.get("org.tensorflow", "Operand"), WildcardTypeName.subtypeOf(Object.class));
-  // Iterable<Operand<?>>
-  private static final TypeName T_ITERABLE_OPERAND =
-      ParameterizedTypeName.get(ClassName.get(Iterable.class), T_OPERAND);
 
   private Filer filer;
   private Messager messager;
@@ -283,7 +271,10 @@ public final class OperatorProcessor extends AbstractProcessor {
 
   private String buildOpMethodJavadoc(ClassName opClassName, ExecutableElement factoryMethod) {
     StringBuilder javadoc = new StringBuilder();
-    javadoc.append("Builds an {@link ").append(opClassName.simpleName()).append("} operation\n\n");
+    javadoc
+        .append("Adds an {@link ")
+        .append(opClassName.simpleName())
+        .append("} operation to the graph\n\n");
 
     // Add all javadoc tags found in the operator factory method but the first one, which should be
     // in all cases the
@@ -314,10 +305,10 @@ public final class OperatorProcessor extends AbstractProcessor {
         TypeSpec.classBuilder(CaseFormat.LOWER_CAMEL.to(CaseFormat.UPPER_CAMEL, group) + "Ops")
             .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
             .addJavadoc(
-                "An API for building {@code $L} operations as {@link $T Op}s\n\n"
+                "An API for adding {@code $L} operations to a {@link $T Graph}\n\n"
                     + "@see {@link $T}\n",
                 group,
-                T_OP,
+                T_GRAPH,
                 T_OPS)
             .addMethods(methods)
             .addMethod(ctorBuilder.build());
@@ -344,12 +335,12 @@ public final class OperatorProcessor extends AbstractProcessor {
         TypeSpec.classBuilder("Ops")
             .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
             .addJavadoc(
-                "An API for building operations as {@link $T Op}s\n<p>\n"
+                "An API for building a {@link $T} with operation wrappers\n<p>\n"
                     + "Any operation wrapper found in the classpath properly annotated as an"
                     + "{@link $T @Operator} is exposed\n"
                     + "by this API or one of its subgroup.\n<p>Example usage:\n<pre>{@code\n"
                     + "try (Graph g = new Graph()) {\n"
-                    + "  Ops ops = Ops.create(g);\n"
+                    + "  Ops ops = new Ops(g);\n"
                     + "  // Operations are typed classes with convenience\n"
                     + "  // builders in Ops.\n"
                     + "  Constant three = ops.constant(3);\n"
@@ -358,21 +349,21 @@ public final class OperatorProcessor extends AbstractProcessor {
                     + "  Operand four = ops.constant(4);\n"
                     + "  // Most builders are found within a group, and accept\n"
                     + "  // Operand types as operands\n"
-                    + "  Operand nine = ops.math.add(four, ops.constant(5));\n"
+                    + "  Operand nine = ops.math().add(four, ops.constant(5));\n"
                     + "  // Multi-result operations however offer methods to\n"
                     + "  // select a particular result for use.\n"
                     + "  Operand result = \n"
-                    + "      ops.math.add(ops.unique(s, a).y(), b);\n"
+                    + "      ops.math().add(ops.array().unique(s, a).y(), b);\n"
                     + "  // Optional attributes\n"
-                    + "  ops.linalg.matMul(a, b, MatMul.transposeA(true));\n"
+                    + "  ops.math().matMul(a, b, MatMul.transposeA(true));\n"
                     + "  // Naming operators\n"
-                    + "  ops.withName(\"foo\").constant(5); // name \"foo\"\n"
+                    + "  ops.withName(“foo”).constant(5); // name “foo”\n"
                     + "  // Names can exist in a hierarchy\n"
-                    + "  Ops sub = ops.withSubScope(\"sub\");\n"
-                    + "  sub.withName(\"bar\").constant(4); // \"sub/bar\"\n"
+                    + "  Ops sub = ops.withSubScope(“sub”);\n"
+                    + "  sub.withName(“bar”).constant(4); // “sub/bar”\n"
                     + "}\n"
                     + "}</pre>\n",
-                T_OP,
+                T_GRAPH,
                 T_OPERATOR)
             .addMethods(methods)
             .addMethod(ctorBuilder.build());
@@ -384,7 +375,7 @@ public final class OperatorProcessor extends AbstractProcessor {
             .returns(T_OPS)
             .addStatement("return new $T(scope.withSubScope(childScopeName))", T_OPS)
             .addJavadoc(
-                "Returns an API that builds operations with the provided name prefix.\n"
+                "Returns an API that adds operations to the graph with the provided name prefix.\n"
                     + "\n@see {@link $T#withSubScope(String)}\n",
                 T_SCOPE)
             .build());
@@ -398,19 +389,6 @@ public final class OperatorProcessor extends AbstractProcessor {
             .addJavadoc(
                 "Returns an API that uses the provided name for an op.\n\n"
                     + "@see {@link $T#withName(String)}\n",
-                T_SCOPE)
-            .build());
-
-    opsBuilder.addMethod(
-        MethodSpec.methodBuilder("withControlDependencies")
-            .addModifiers(Modifier.PUBLIC)
-            .addParameter(T_ITERABLE_OPERAND, "controls")
-            .returns(T_OPS)
-            .addStatement("return new Ops(scope.withControlDependencies(controls))")
-            .addJavadoc(
-                "Returns an API that adds operations to the graph with the provided control"
-                    + " dependencies.\n\n"
-                    + "@see {@link $T#withControlDependencies(Iterable<Operand<?>>)}\n",
                 T_SCOPE)
             .build());
 
@@ -436,30 +414,18 @@ public final class OperatorProcessor extends AbstractProcessor {
               .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
               .returns(entry.getValue())
               .addStatement("return $L", entry.getKey())
-              .addJavadoc("Returns an API for building {@code $L} operations\n", entry.getKey())
+              .addJavadoc(
+                  "Returns an API for adding {@code $L} operations to the graph\n", entry.getKey())
               .build());
     }
 
     opsBuilder.addMethod(
         MethodSpec.methodBuilder("create")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .addParameter(T_EXEC_ENV, "env")
+            .addParameter(T_GRAPH, "graph")
             .returns(T_OPS)
-            .addStatement("return new Ops(new $T(env))", T_SCOPE)
-            .addJavadoc(
-                "Creates an API for building operations in the provided execution environment\n")
-            .build());
-
-    opsBuilder.addMethod(
-        MethodSpec.methodBuilder("create")
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .returns(T_OPS)
-            .addStatement("return new Ops(new $T($T.getDefault()))", T_SCOPE, T_EAGER_SESSION)
-            .addJavadoc(
-                "Creates an API for building operations in the default eager execution"
-                    + " environment\n\n"
-                    + "<p>Invoking this method is equivalent to {@code"
-                    + " Ops.create(EagerSession.getDefault())}.\n")
+            .addStatement("return new Ops(new $T(graph))", T_SCOPE)
+            .addJavadoc("Creates an API for adding operations to the provided {@code graph}\n")
             .build());
 
     return opsBuilder.build();

@@ -19,19 +19,16 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/bias_op.h"
 #include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
-#include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/numeric_op.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
-#include "tensorflow/core/kernels/redux_functor.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 #include "tensorflow/core/util/tensor_format.h"
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 #include "tensorflow/core/kernels/bias_op_gpu.h"
 #include "tensorflow/core/platform/stream_executor.h"
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#if GOOGLE_CUDA
 #include "tensorflow/stream_executor/cuda/cuda_stream.h"
 #endif  // GOOGLE_CUDA
 
@@ -39,6 +36,9 @@ namespace tensorflow {
 
 typedef Eigen::ThreadPoolDevice CPUDevice;
 typedef Eigen::GpuDevice GPUDevice;
+#ifdef TENSORFLOW_USE_SYCL
+typedef Eigen::SyclDevice SYCLDevice;
+#endif  // TENSORFLOW_USE_SYCL
 
 namespace {
 
@@ -153,13 +153,13 @@ class BiasOp : public BinaryOp<T> {
               bias.tensor<T, 1>().reshape(four_dims).broadcast(broad_cast_dims);
         } break;
         case 5: {
-          Eigen::DSizes<int32, 5> five_dims(1, channel, 1, 1, 1);
+          Eigen::DSizes<int32, 5> four_dims(1, channel, 1, 1, 1);
           Eigen::DSizes<int32, 5> broad_cast_dims(batch, 1, height, width,
                                                   depth);
           const Device& d = context->eigen_device<Device>();
           output->tensor<T, 5>().device(d) =
               input.tensor<T, 5>() +
-              bias.tensor<T, 1>().reshape(five_dims).broadcast(broad_cast_dims);
+              bias.tensor<T, 1>().reshape(four_dims).broadcast(broad_cast_dims);
         } break;
         default:
           OP_REQUIRES(context, false,
@@ -213,6 +213,20 @@ class BiasOp : public BinaryOp<T> {
 TF_CALL_NUMBER_TYPES(REGISTER_KERNEL);
 #undef REGISTER_KERNEL
 
+#ifdef TENSORFLOW_USE_SYCL
+#define REGISTER_KERNEL(type)                                          \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("BiasAdd").Device(DEVICE_SYCL).TypeConstraint<type>("T"),   \
+      BiasOp<SYCLDevice, type>);                                       \
+  REGISTER_KERNEL_BUILDER(                                             \
+      Name("BiasAddV1").Device(DEVICE_SYCL).TypeConstraint<type>("T"), \
+      BiasOp<SYCLDevice, type>);
+
+TF_CALL_INTEGRAL_TYPES(REGISTER_KERNEL);
+REGISTER_KERNEL(float);
+REGISTER_KERNEL(double);
+#undef REGISTER_KERNEL
+#endif  // TENSORFLOW_USE_SYCL
 
 template <typename Device, typename T>
 class BiasGradOp : public OpKernel {
@@ -255,25 +269,40 @@ class BiasGradOp : public OpKernel {
       output->template flat<T>().setZero();
     } else {
       // Added by intel_tf to support NCHW on CPU regardless of MKL used or not.
-      using AccumT = typename AccumulatorType<T>::type;
+      // TODO(yongtang): Add 3/4/5 dimensional data support for NCHW format.
       if (data_format_ == FORMAT_NCHW) {
-        const functor::ReduceMiddleDimensions<
-            T, AccumT, T, Eigen::internal::scalar_sum_op<AccumT>,
-            Eigen::internal::SumReducer<T>>
-            redux;
-        Eigen::DSizes<Eigen::Index, 3> three_dims(batch, channel,
-                                                  height * width * depth);
-        redux(context->eigen_device<Device>(), three_dims, output_backprop,
-              output, 1);
+        OP_REQUIRES(context, output_backprop.dims() == 4,
+                    errors::InvalidArgument(
+                        "NCHW format supports only 4D input/output tensor."));
+        Eigen::DSizes<Eigen::Index, 4> four_dims(batch, channel, height, width);
+#ifdef EIGEN_HAS_INDEX_LIST
+        using idx0 = Eigen::type2index<0>;
+        using idx2 = Eigen::type2index<2>;
+        using idx3 = Eigen::type2index<3>;
+        Eigen::IndexList<idx0, idx2, idx3> reduction_axes;
+#else
+        Eigen::array<Eigen::Index, 3> reduction_axes = {0, 2, 3};
+#endif
+        output->template flat<T>().device(context->eigen_device<Device>()) =
+            output_backprop.flat<T>()
+                .template cast<typename AccumulatorType<T>::type>()
+                .reshape(four_dims)
+                .sum(reduction_axes)
+                .template cast<T>();  // End of code by intel_tf.
       } else {
-        const functor::ReduceOuterDimensions<
-            T, AccumT, T, Eigen::internal::scalar_sum_op<AccumT>>
-            redux;
-
-        Eigen::DSizes<Eigen::Index, 2> two_dims(batch * height * width * depth,
+        Eigen::DSizes<Eigen::Index, 2> two_dims(batch * height * width,
                                                 channel);
-        redux(context->eigen_device<Device>(), two_dims, output_backprop,
-              output);
+#ifdef EIGEN_HAS_INDEX_LIST
+        Eigen::IndexList<Eigen::type2index<0> > reduction_axis;
+#else
+        Eigen::array<Eigen::Index, 1> reduction_axis = {0};
+#endif
+        output->template flat<T>().device(context->eigen_device<Device>()) =
+            output_backprop.flat<T>()
+                .template cast<typename AccumulatorType<T>::type>()
+                .reshape(two_dims)
+                .sum(reduction_axis)
+                .template cast<T>();
       }
     }
   }
@@ -291,8 +320,19 @@ class BiasGradOp : public OpKernel {
 TF_CALL_NUMBER_TYPES(REGISTER_KERNEL);
 #undef REGISTER_KERNEL
 
+#ifdef TENSORFLOW_USE_SYCL
+#define REGISTER_KERNEL(type)                                            \
+  REGISTER_KERNEL_BUILDER(                                               \
+      Name("BiasAddGrad").Device(DEVICE_SYCL).TypeConstraint<type>("T"), \
+      BiasGradOp<SYCLDevice, type>);
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+TF_CALL_INTEGRAL_TYPES(REGISTER_KERNEL);
+REGISTER_KERNEL(float);
+REGISTER_KERNEL(double);
+#undef REGISTER_KERNEL
+#endif  // TENSORFLOW_USE_SYCL
+
+#if GOOGLE_CUDA
 template <typename T>
 class BiasOp<GPUDevice, T> : public BinaryOp<T> {
  public:
@@ -351,7 +391,6 @@ class BiasOp<GPUDevice, T> : public BinaryOp<T> {
       BiasOp<GPUDevice, type>);
 
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNEL);
-REGISTER_GPU_KERNEL(int32);
 #undef REGISTER_GPU_KERNEL
 
 struct BiasGradAutotuneGroup {
@@ -416,7 +455,7 @@ class BiasAddParams {
   string ToString() const {
     // clang-format off
     return strings::StrCat(
-        "(", absl::StrJoin(in_shape_, ", "), "), ",
+        "(", str_util::Join(in_shape_, ", "), "), ",
         data_format_, ", ", dtype_, ", ", device_id_);
     // clang-format on
   }
@@ -457,21 +496,21 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
 
   void ComputeWithCustomKernel(OpKernelContext* context,
                                const Tensor& output_backprop, int32 batch,
-                               int32 width, int32 height, int32 depth,
-                               int32 channel, Tensor* output) {
+                               int32 width, int32 height, int32 channel,
+                               Tensor* output) {
     BiasGradGPU<T>::compute(context->template eigen_device<Device>(),
                             output_backprop.template flat<T>().data(),
                             output->flat<T>().data(), batch, width, height,
-                            depth, channel, data_format_);
+                            channel, data_format_);
   }
 
   void ComputeWithReduceSum(OpKernelContext* context,
                             const Tensor& output_backprop, int32 batch,
-                            int32 width, int32 height, int32 depth,
-                            int32 channel, Tensor* output) {
+                            int32 width, int32 height, int32 channel,
+                            Tensor* output) {
     if (data_format_ == FORMAT_NCHW) {
       int32 row_count = batch * channel;
-      int32 col_count = height * width * depth;
+      int32 col_count = height * width;
       Tensor temp_grad_outputs;
       // For 'NCHW' format, we perform reduction twice: first HW, then N.
       TensorShape temp_grad_output_shape{row_count, col_count};
@@ -489,7 +528,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
                                      row_count, col_count);
     } else {
       // For 'NHWC', we simply apply reduction once on NHW.
-      int32 row_count = batch * height * width * depth;
+      int32 row_count = batch * height * width;
       int32 col_count = channel;
       BiasGradGPU<T>::DoColReduction(
           context, const_cast<T*>(output->flat<T>().data()),
@@ -522,7 +561,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
     int device_id = stream->parent()->device_ordinal();
     DataType dtype = output_backprop.dtype();
     BiasAddParams bias_parameters = {
-        {batch, height * width * depth, channel},
+        {batch, height * width, channel},
         data_format_,
         dtype,
         device_id,
@@ -537,7 +576,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
       stream->InitTimer(&timer);
       stream->ThenStartTimer(&timer);
       ComputeWithCustomKernel(context, output_backprop, batch, width, height,
-                              depth, channel, output);
+                              channel, output);
       stream->ThenStopTimer(&timer);
       uint64 elapsed_microseconds = timer.Microseconds();
       VLOG(1) << "BiasAddGrad " << bias_parameters.ToString()
@@ -550,7 +589,7 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
       // Try reduction and profile.
       stream->ThenStartTimer(&timer);
       ComputeWithReduceSum(context, output_backprop, batch, width, height,
-                           depth, channel, output);
+                           channel, output);
       stream->ThenStopTimer(&timer);
 
       elapsed_microseconds = timer.Microseconds();
@@ -571,11 +610,11 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
     // Choose the best algorithm based on autotune results.
     if (algo_config.get_mode() == BiasAddGradGPUMode::kReduction) {
       ComputeWithReduceSum(context, output_backprop, batch, width, height,
-                           depth, channel, output);
+                           channel, output);
     } else {
       // Default to the customized kernel.
       ComputeWithCustomKernel(context, output_backprop, batch, width, height,
-                              depth, channel, output);
+                              channel, output);
     }
   }
 
@@ -592,6 +631,6 @@ class BiasGradOp<GPUDevice, T> : public OpKernel {
 TF_CALL_GPU_NUMBER_TYPES(REGISTER_GPU_KERNEL);
 #undef REGISTER_GPU_KERNEL
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

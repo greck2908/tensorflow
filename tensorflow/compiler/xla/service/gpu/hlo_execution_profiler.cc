@@ -23,6 +23,7 @@ limitations under the License.
 #include "absl/memory/memory.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/hlo_execution_profile.h"
+#include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/stream_pool.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
@@ -90,39 +91,32 @@ void HloExecutionProfiler::FinishHloComputation(
   }
 }
 
-void HloExecutionProfiler::FinishHloComputation(
-    absl::optional<size_t> profile_index) {
-  if (do_profile_) {
-    profile_->SetCyclesTakenBy(
-        profile_index.value(),
-        GetCyclesTaken(&timers_, sub_streams_, stream_, clock_rate_ghz_));
-  }
-}
-
 void HloExecutionProfiler::StartHloInstruction() {
   if (do_profile_) {
     InitAndStartTimer(&timers_, stream_);
   }
 }
 
-void HloExecutionProfiler::FinishHloInstruction(size_t index) {
+void HloExecutionProfiler::FinishHloInstruction(
+    const HloInstruction* hlo_instruction) {
   if (do_profile_) {
-    indices_.erase(index);
-    profile_->SetCyclesTakenBy(index, GetCyclesTaken(&timers_, sub_streams_,
-                                                     stream_, clock_rate_ghz_));
+    hlo_instructions_.erase(hlo_instruction);
+    profile_->SetCyclesTakenBy(
+        hlo_instruction,
+        GetCyclesTaken(&timers_, sub_streams_, stream_, clock_rate_ghz_));
   }
 }
 
 std::unique_ptr<ScopedInstructionProfiler>
 HloExecutionProfiler::MakeScopedInstructionProfiler(
-    absl::optional<int64> index) {
-  if (do_profile_ && index.has_value()) {
+    const HloInstruction* hlo_instruction) {
+  if (do_profile_ && hlo_instruction != nullptr) {
     // Make sure that we are not already measuring the time for the same
-    // instruction.
-    // TODO(timshen): provide more useful printout.
-    CHECK(indices_.insert(*index).second) << *index;
+    // 'hlo_instruction'.
+    CHECK(hlo_instructions_.insert(hlo_instruction).second)
+        << hlo_instruction->name();
   }
-  return absl::make_unique<ScopedInstructionProfiler>(this, index);
+  return absl::make_unique<ScopedInstructionProfiler>(this, hlo_instruction);
 }
 
 }  // namespace gpu

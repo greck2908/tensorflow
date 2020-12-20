@@ -16,7 +16,6 @@ limitations under the License.
 #ifndef TENSORFLOW_COMPILER_XLA_SERVICE_GPU_FFT_THUNK_H_
 #define TENSORFLOW_COMPILER_XLA_SERVICE_GPU_FFT_THUNK_H_
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/types/optional.h"
 #include "tensorflow/compiler/xla/service/buffer_assignment.h"
 #include "tensorflow/compiler/xla/service/gpu/buffer_allocations.h"
@@ -39,19 +38,19 @@ namespace gpu {
 class FftScratchAllocator : public se::ScratchAllocator {
  public:
   FftScratchAllocator(int device_ordinal,
-                      se::DeviceMemoryAllocator* memory_allocator);
+                      DeviceMemoryAllocator* memory_allocator);
 
-  int64 GetMemoryLimitInBytes() override;
+  int64 GetMemoryLimitInBytes(se::Stream* stream) override;
 
   int64 TotalAllocatedBytes() { return total_allocated_bytes_; }
 
   se::port::StatusOr<se::DeviceMemory<uint8>> AllocateBytes(
-      int64 byte_size) override;
+      se::Stream* stream, int64 byte_size) override;
 
  private:
   const int device_ordinal_;
-  se::DeviceMemoryAllocator* memory_allocator_;
-  std::vector<se::OwningDeviceMemory> allocated_buffers_;
+  DeviceMemoryAllocator* memory_allocator_;
+  std::vector<OwningDeviceMemory> allocated_buffers_;
   int64 total_allocated_bytes_ = 0;
 };
 
@@ -63,17 +62,19 @@ class FftThunk : public Thunk {
  public:
   // Constructs a thunk for launching an FFT on a stream.
   // Semantics of null hlo_instruction argument are as in Thunk.
-  FftThunk(ThunkInfo thunk_info, FftType fft_type,
-           absl::Span<const int64> fft_length,
+  FftThunk(FftType fft_type, absl::Span<const int64> fft_length,
            const BufferAllocation::Slice& input_buffer,
            const BufferAllocation::Slice& output_buffer,
-           const Shape& input_shape, const Shape& output_shape);
+           const Shape& input_shape, const Shape& output_shape,
+           const HloInstruction* hlo);
 
   FftThunk(const FftThunk&) = delete;             // Cannot share fft_plan_
   FftThunk& operator=(const FftThunk&) = delete;  // Cannot share fft_plan_
 
   // Does the FFT for the thunk on "stream".
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                         se::Stream* stream,
+                         HloExecutionProfiler* profiler) override;
 
  private:
   const se::fft::Type fft_type_;
@@ -81,14 +82,7 @@ class FftThunk : public Thunk {
 
   float scale_factor_;
 
-  // One plan per device ordinal.
-  absl::Mutex mu_;
-  struct FftPlan {
-    absl::Mutex mu;
-    std::unique_ptr<se::fft::Plan> plan;
-  };
-  absl::flat_hash_map<int, std::unique_ptr<FftPlan>> fft_plans_
-      ABSL_GUARDED_BY(mu_);
+  std::unique_ptr<se::fft::Plan> fft_plan_;
 
   const BufferAllocation::Slice input_buffer_;
   const BufferAllocation::Slice output_buffer_;

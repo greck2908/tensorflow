@@ -13,12 +13,12 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/core/lib/io/zlib_inputstream.h"
-
 #include <zlib.h>
 
+#include "tensorflow/core/lib/io/zlib_inputstream.h"
+
+#include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/logging.h"
-#include "tensorflow/core/platform/strcat.h"
 
 namespace tensorflow {
 namespace io {
@@ -76,7 +76,7 @@ ZlibInputStream::ZlibInputStream(InputStreamInterface* input_stream,
                       zlib_options, false) {}
 
 ZlibInputStream::~ZlibInputStream() {
-  if (z_stream_def_->stream && !init_error_) {
+  if (z_stream_def_->stream) {
     inflateEnd(z_stream_def_->stream.get());
   }
   if (owns_input_stream_) {
@@ -85,9 +85,6 @@ ZlibInputStream::~ZlibInputStream() {
 }
 
 Status ZlibInputStream::Reset() {
-  if (init_error_) {
-    return errors::DataLoss("unable to reset stream, cannot decompress.");
-  }
   TF_RETURN_IF_ERROR(input_stream_->Reset());
   inflateEnd(z_stream_def_->stream.get());
   InitZlibBuffer();
@@ -107,10 +104,6 @@ void ZlibInputStream::InitZlibBuffer() {
   int status =
       inflateInit2(z_stream_def_->stream.get(), zlib_options_.window_bits);
 
-  if (zlib_options_.soft_fail_on_error && status != Z_OK) {
-    init_error_ = true;
-    return;
-  }
   CHECK_EQ(status, Z_OK) << "inflateInit failed with status " << status;
 
   z_stream_def_->stream->next_in = z_stream_def_->input.get();
@@ -139,7 +132,7 @@ Status ZlibInputStream::ReadFromStream() {
     bytes_to_read -= z_stream_def_->stream->avail_in;
     read_location += z_stream_def_->stream->avail_in;
   }
-  tstring data;
+  string data;
   // Try to read enough data to fill up z_stream_def_->input.
   // TODO(rohanj): Add a char* version of ReadNBytes to InputStreamInterface
   // and use that instead to make this more efficient.
@@ -173,7 +166,7 @@ Status ZlibInputStream::ReadFromStream() {
 }
 
 size_t ZlibInputStream::ReadBytesFromCache(size_t bytes_to_read,
-                                           tstring* result) {
+                                           string* result) {
   size_t unread_bytes =
       reinterpret_cast<char*>(z_stream_def_->stream->next_out) -
       next_unread_byte_;
@@ -193,11 +186,7 @@ size_t ZlibInputStream::NumUnreadBytes() const {
          read_bytes;
 }
 
-Status ZlibInputStream::ReadNBytes(int64 bytes_to_read, tstring* result) {
-  if (init_error_) {
-    return errors::DataLoss("Unable to decompress Zlib file.");
-  }
-
+Status ZlibInputStream::ReadNBytes(int64 bytes_to_read, string* result) {
   result->clear();
   // Read as many bytes as possible from cache.
   bytes_to_read -= ReadBytesFromCache(bytes_to_read, result);
@@ -208,46 +197,34 @@ Status ZlibInputStream::ReadNBytes(int64 bytes_to_read, tstring* result) {
 
     // Now that the cache is empty we need to inflate more data.
 
-    // Step 1. Setup output stream.
+    // Step 1. Fill up input buffer.
+    // We read from stream only after the previously read contents have been
+    // completely consumed. This is an optimization and can be removed if
+    // it causes problems. `ReadFromStream` is capable of handling partially
+    // filled up buffers.
+    if (z_stream_def_->stream->avail_in == 0) {
+      TF_RETURN_IF_ERROR(ReadFromStream());
+    }
+
+    // Step 2. Setup output stream.
     z_stream_def_->stream->next_out = z_stream_def_->output.get();
     next_unread_byte_ = reinterpret_cast<char*>(z_stream_def_->output.get());
     z_stream_def_->stream->avail_out = output_buffer_capacity_;
 
-    // Step 2. Try to inflate some input data.
+    // Step 3. Inflate Inflate Inflate!
     TF_RETURN_IF_ERROR(Inflate());
 
-    // Step 3. Read any data produced by inflate. If no progress was made by
-    // inflate, read more compressed data from the input stream.
-    if (NumUnreadBytes() == 0) {
-      TF_RETURN_IF_ERROR(ReadFromStream());
-    } else {
-      bytes_to_read -= ReadBytesFromCache(bytes_to_read, result);
-    }
+    bytes_to_read -= ReadBytesFromCache(bytes_to_read, result);
   }
 
   return Status::OK();
 }
 
-#if defined(TF_CORD_SUPPORT)
-Status ZlibInputStream::ReadNBytes(int64 bytes_to_read, absl::Cord* result) {
-  // TODO(frankchn): Optimize this instead of bouncing through the buffer.
-  tstring buf;
-  TF_RETURN_IF_ERROR(ReadNBytes(bytes_to_read, &buf));
-  result->Clear();
-  result->Append(buf.data());
-  return Status::OK();
-}
-#endif
-
 int64 ZlibInputStream::Tell() const { return bytes_read_; }
 
 Status ZlibInputStream::Inflate() {
   int error = inflate(z_stream_def_->stream.get(), zlib_options_.flush_mode);
-  // Source: http://zlib.net/manual.html
-  // Z_BUF_ERROR: `inflate` returns Z_BUF_ERROR if no progress was made. This is
-  // not fatal and `inflate` can be called again with more input and output
-  // space to continue inflating.
-  if (error != Z_OK && error != Z_STREAM_END && error != Z_BUF_ERROR) {
+  if (error != Z_OK && error != Z_STREAM_END) {
     string error_string =
         strings::StrCat("inflate() failed with error ", error);
     if (z_stream_def_->stream->msg != nullptr) {

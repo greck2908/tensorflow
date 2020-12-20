@@ -73,10 +73,7 @@ node {
             size: 4
           }
         }
-        int_val: 1
-        int_val: 1
-        int_val: 24
-        int_val: 64
+        tensor_content: "\001\000\000\000\001\000\000\000\030\000\000\000@\000\000\000"
       }
     }
   }
@@ -131,10 +128,7 @@ node {
             size: 4
           }
         }
-        int_val: 128
-        int_val: 224
-        int_val: 224
-        int_val: 3
+        tensor_content: "\200\000\000\000\340\000\000\000\340\000\000\000\003\000\000\000"
       }
     }
   }
@@ -189,10 +183,7 @@ node {
             size: 4
           }
         }
-        int_val: 7
-        int_val: 7
-        int_val: 3
-        int_val: 8
+        tensor_content: "\007\000\000\000\007\000\000\000\003\000\000\000\010\000\000\000"
       }
     }
   }
@@ -518,13 +509,6 @@ library {
         key: "padding"
         value {
           s: "VALID"
-        }
-      }
-      attr {
-        key: "explicit_paddings"
-        value {
-          list {
-          }
         }
       }
       attr {

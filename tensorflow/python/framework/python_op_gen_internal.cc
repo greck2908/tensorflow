@@ -17,24 +17,23 @@ limitations under the License.
 
 #include <float.h>
 #include <stdio.h>
-
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
-
-#include "absl/strings/escaping.h"
-#include "absl/strings/str_replace.h"
 #include "tensorflow/core/framework/api_def.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/op.h"
 #include "tensorflow/core/framework/op_def.pb.h"
+#include "tensorflow/core/framework/op_def.pb_text.h"
 #include "tensorflow/core/framework/op_def_util.h"
 #include "tensorflow/core/framework/op_gen_lib.h"
 #include "tensorflow/core/framework/tensor.pb.h"
+#include "tensorflow/core/framework/tensor.pb_text.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
+#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/lib/strings/stringprintf.h"
@@ -46,9 +45,6 @@ namespace tensorflow {
 namespace python_op_gen_internal {
 
 const int kRightMargin = 78;
-// Names specified in tf_export decorators are exported to
-// TensorFlow 2.0 by default.
-const int kLatestAPIExportVersion = 2;
 
 bool IsPythonReserved(const string& s) {
   static const std::set<string>* const kPythonReserved = new std::set<string>(
@@ -108,11 +104,8 @@ bool IsOpWithUnderscorePrefix(const string& s) {
 }
 
 string AvoidPythonReserved(const string& s) {
-  // Convert namespace separators ('>' characters) to joiners
-  string result = absl::StrReplaceAll(s, {{">", "_"}});
-
-  if (IsPythonReserved(result)) return strings::StrCat(result, "_");
-  return result;
+  if (IsPythonReserved(s)) return strings::StrCat(s, "_");
+  return s;
 }
 
 // Indent the first line by "initial" spaces and all following lines
@@ -120,7 +113,7 @@ string AvoidPythonReserved(const string& s) {
 string Indent(int initial, int rest, StringPiece in) {
   // TODO(josh11b): Also word-wrapping?
   string copy(in.data(), in.size());
-  absl::StripTrailingAsciiWhitespace(&copy);
+  str_util::StripTrailingWhitespace(&copy);
   std::vector<string> v = str_util::Split(copy, '\n');
 
   string result;
@@ -323,7 +316,7 @@ string GetReturns(const OpDef& op_def,
         }
       }
       strings::StrAppend(&result, "    A tuple of `Tensor` objects (",
-                         absl::StrJoin(out_names, ", "), ").\n\n");
+                         str_util::Join(out_names, ", "), ").\n\n");
       for (int i = 0; i < num_outs; ++i) {
         string desc = strings::StrCat(out_names[i], ": ");
         StringPiece description = op_def.output_arg(i).description();
@@ -354,7 +347,7 @@ string GetReturns(const OpDef& op_def,
 }
 
 string StringToPython(const string& str) {
-  return strings::StrCat("\"", absl::CEscape(str), "\"");
+  return strings::StrCat("\"", str_util::CEscape(str), "\"");
 }
 
 string DataTypeToPython(DataType dtype, const string& dtype_module) {
@@ -380,7 +373,7 @@ string ShapeToPython(const TensorShapeProto& shape) {
 }
 
 string TensorToPython(const TensorProto& proto) {
-  return proto.ShortDebugString();
+  return ProtoShortDebugString(proto);
 }
 
 string AttrListToPython(const AttrValue& value,
@@ -449,12 +442,7 @@ string AttrValueToPython(const string& type, const AttrValue& value,
       std::ostringstream s;
       s.imbue(std::locale::classic());
       s << std::setprecision(FLT_DIG) << value.f();
-      // If there is no I/O error for `std::ostringstream s` return s.str(),
-      // otherwise fallback to strings::StrCat(value.f()).
-      if (s.good()) {
-        return s.str();
-      }
-      return strings::StrCat(value.f());
+      return s.str();
     }
   } else if (type == "bool") {
     return value.b() ? "True" : "False";
@@ -466,7 +454,7 @@ string AttrValueToPython(const string& type, const AttrValue& value,
     return TensorToPython(value.tensor());
   } else if (type == "func") {
     return StringToPython(value.func().name());
-  } else if (absl::StartsWith(type, "list(")) {
+  } else if (str_util::StartsWith(type, "list(")) {
     return strings::StrCat("[", AttrListToPython(value, dtype_module), "]");
   } else {
     return "?";
@@ -475,24 +463,14 @@ string AttrValueToPython(const string& type, const AttrValue& value,
 
 void GenerateLowerCaseOpName(const string& str, string* result) {
   const char joiner = '_';
-  const char namespace_separator = '>';
   const int last_index = str.size() - 1;
   for (int i = 0; i <= last_index; ++i) {
     const char c = str[i];
-    // Convert namespace separators ('>' characters) to joiners
-    if (c == namespace_separator) {
-      result->push_back(joiner);
-      continue;
-    }
-
     // Emit a joiner only if a previous-lower-to-now-upper or a
     // now-upper-to-next-lower transition happens.
-    // (But don't emit an extra joiner if we just saw a namespace separator
     if (isupper(c) && (i > 0)) {
       if (islower(str[i - 1]) || ((i < last_index) && islower(str[i + 1]))) {
-        if (!(str[i - 1] == namespace_separator)) {
-          result->push_back(joiner);
-        }
+        result->push_back(joiner);
       }
     }
     result->push_back(tolower(c));
@@ -513,11 +491,10 @@ const ApiDef::Attr* FindAttr(StringPiece name, const ApiDef& api_def) {
 }
 
 GenPythonOp::GenPythonOp(const OpDef& op_def, const ApiDef& api_def,
-                         const string& function_name, bool add_type_annotations)
+                         const string& function_name)
     : op_def_(op_def),
       api_def_(api_def),
       function_name_(function_name),
-      add_type_annotations_(add_type_annotations),
       num_outs_(op_def.output_arg_size()) {}
 
 GenPythonOp::~GenPythonOp() {}
@@ -562,11 +539,10 @@ string GenPythonOp::Code() {
   // from the end of args_no_default, and adding args_no_default.
   attrs_.reserve(params_no_default.size() - op_def_.input_arg_size() +
                  params_with_default.size());
-  for (int i = op_def_.input_arg_size(), end = params_no_default.size();
-       i < end; ++i) {
+  for (int i = op_def_.input_arg_size(); i < params_no_default.size(); ++i) {
     attrs_.push_back(params_no_default[i].GetName());
   }
-  for (int i = 0, end = params_with_default.size(); i < end; ++i) {
+  for (int i = 0; i < params_with_default.size(); ++i) {
     attrs_.push_back(params_with_default[i].GetName());
   }
 
@@ -609,42 +585,28 @@ void GenPythonOp::AddExport() {
   if (api_def_.visibility() != ApiDef::VISIBLE) {
     return;
   }
-  // Whether op should be available in latest export version.
-  bool op_available_in_latest =
-      !api_def_.deprecation_version() ||
-      api_def_.deprecation_version() > kLatestAPIExportVersion;
 
-  string names;
-  string names_v1;
-  string deprecated_endpoints;
+  // Add @tf_export decorator.
+  strings::StrAppend(&result_, "@tf_export(");
 
+  // Add all endpoint names to tf_export.
+  bool first_endpoint = true;
+  std::vector<string> deprecated_endpoints;
   for (const auto& endpoint : api_def_.endpoint()) {
+    if (!first_endpoint) {
+      strings::StrAppend(&result_, ", ");
+    } else {
+      first_endpoint = false;
+    }
     string endpoint_name;
     python_op_gen_internal::GenerateLowerCaseOpName(endpoint.name(),
                                                     &endpoint_name);
-    if (endpoint.deprecated() || endpoint.deprecation_version() > 0) {
-      AddDelimiter(&deprecated_endpoints, ", ");
-      strings::StrAppend(&deprecated_endpoints, "'", endpoint_name, "'");
+    if (endpoint.deprecated()) {
+      deprecated_endpoints.push_back(endpoint_name);
     }
-    // Add all endpoints to TensorFlow 1.* API.
-    AddDelimiter(&names_v1, ", ");
-    strings::StrAppend(&names_v1, "'", endpoint_name, "'");
-    // Add non-deprecated endpoints to TensorFlow 2.* API.
-    if (op_available_in_latest &&
-        (!endpoint.deprecation_version() ||
-         endpoint.deprecation_version() > kLatestAPIExportVersion)) {
-      AddDelimiter(&names, ", ");
-      strings::StrAppend(&names, "'", endpoint_name, "'");
-    }
+    strings::StrAppend(&result_, "'", endpoint_name, "'");
   }
-
-  // tf_export decorator has the following format:
-  // @tf_export(v2_name, v2_name, v1=[v1_name, v1_name])
-  if (names != names_v1) {
-    AddDelimiter(&names, ", ");
-    strings::StrAppend(&names, "v1=[", names_v1, "]");
-  }
-  strings::StrAppend(&result_, "@tf_export(", names, ")\n");
+  strings::StrAppend(&result_, ")\n");
 
   // If all endpoints are deprecated, add @deprecated decorator.
   if (!api_def_.deprecation_message().empty()) {
@@ -653,8 +615,17 @@ void GenPythonOp::AddExport() {
   }
   // Add @deprecated_endpoints decorator.
   if (!deprecated_endpoints.empty()) {
-    strings::StrAppend(&result_, "@deprecated_endpoints(", deprecated_endpoints,
-                       ")\n");
+    strings::StrAppend(&result_, "@deprecated_endpoints(");
+    bool first_endpoint = true;
+    for (auto& endpoint_name : deprecated_endpoints) {
+      if (first_endpoint) {
+        first_endpoint = false;
+      } else {
+        strings::StrAppend(&result_, ", ");
+      }
+      strings::StrAppend(&result_, "'", endpoint_name, "'");
+    }
+    strings::StrAppend(&result_, ")\n");
   }
 }
 
@@ -780,29 +751,36 @@ void GenPythonOp::AddDocStringNameArg() {
 }
 
 void GenPythonOp::AddOutputGlobals() {
-  // Generate a namedtuple class to hold the outputs, if there are multiple.
-  // Example:
-  //
-  // _OpOutputs = collections.namedtuple(
-  //     "_OpOutputs",
-  //     "out1 out2 out3")
+  // Prepare a NamedTuple type to hold the outputs, if there are multiple
   if (num_outs_ > 1) {
-    std::vector<string> out_names;
-    out_names.reserve(num_outs_);
+    // Prepare the list of output names
+    std::vector<string> out_names(num_outs_);
     for (int i = 0; i < num_outs_; ++i) {
-      const string out_name = !api_def_.out_arg(i).rename_to().empty()
-                                  ? api_def_.out_arg(i).rename_to()
-                                  : strings::StrCat("output", i);
-      out_names.push_back(strings::StrCat("\"", out_name, "\""));
+      if (!api_def_.out_arg(i).rename_to().empty()) {
+        out_names[i] = api_def_.out_arg(i).rename_to();
+      } else {
+        out_names[i] = strings::StrCat("output", i);
+      }
     }
+    string out_names_list =
+        strings::StrCat("[\"", str_util::Join(out_names, "\", \""), "\"]");
 
-    strings::StrAppend(&prelude_, "_", AvoidPythonReserved(op_def_.name()),
-                       "Output = collections.namedtuple(\n");
-    strings::StrAppend(&prelude_, "    \"", AvoidPythonReserved(op_def_.name()),
-                       "\",\n");
-    strings::StrAppend(&prelude_, "    [", absl::StrJoin(out_names, ", "),
-                       "])");
-    strings::StrAppend(&prelude_, "\n\n");
+    // Provide the output names as a Python list
+    string lower_op_name_outputs =
+        strings::StrCat("_", function_name_, "_outputs");
+    const string outputs_prefix = strings::StrCat(lower_op_name_outputs, " = ");
+    strings::StrAppend(&prelude_, "\n",
+                       WordWrap(outputs_prefix, out_names_list, kRightMargin),
+                       "\n");
+
+    strings::StrAppend(&prelude_, "_", op_def_.name(),
+                       "Output = _collections.namedtuple(\n");
+    const string tuple_type_prefix = "    ";
+    const string tuple_type_suffix = strings::StrCat(
+        "\"", op_def_.name(), "\", ", lower_op_name_outputs, ")");
+    strings::StrAppend(
+        &prelude_, WordWrap(tuple_type_prefix, tuple_type_suffix, kRightMargin),
+        "\n\n");
   }
   strings::StrAppend(&prelude_, "\n");
 }
@@ -818,19 +796,18 @@ void GenPythonOp::AddDocStringOutputs() {
 }
 
 void GenPythonOp::AddBody(const string& prefix) {
-  const string apply_prefix = strings::StrCat(
-      prefix, "_result = _op_def_lib.apply_op(\"", op_def_.name(), "\", ");
+  const string apply_prefix =
+      strings::StrCat(prefix, "_result = _op_def_lib.apply_op(");
   AddBodyNoReturn(apply_prefix);
   if (num_outs_ > 1) {
-    strings::StrAppend(&result_, prefix, "_result = _",
-                       AvoidPythonReserved(op_def_.name()),
+    strings::StrAppend(&result_, prefix, "_result = _", op_def_.name(),
                        "Output._make(_result)\n");
   }
   strings::StrAppend(&result_, prefix, "return _result\n");
 }
 
 void GenPythonOp::AddBodyNoReturn(const string& apply_prefix) {
-  string args;
+  string args = strings::StrCat("\"", op_def_.name(), "\", ");
   for (size_t i = 0; i < param_names_.size(); ++i) {
     strings::StrAppend(&args, AvoidPythonReserved(param_names_[i].GetName()),
                        "=", param_names_[i].GetRenameTo(), ", ");

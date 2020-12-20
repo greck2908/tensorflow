@@ -21,7 +21,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "tensorflow/core/framework/dataset.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -131,7 +130,7 @@ class InitializeTableFromTextFileOp : public OpKernel {
         errors::InvalidArgument("filename should be a single string, but got ",
                                 vocab_filename_tensor.shape().DebugString()));
 
-    const string& vocab_filename = vocab_filename_tensor.scalar<tstring>()();
+    string vocab_filename = vocab_filename_tensor.scalar<string>()();
     OP_REQUIRES(ctx, !vocab_filename.empty(),
                 errors::InvalidArgument("filename cannot be empty."));
 
@@ -164,31 +163,4 @@ REGISTER_KERNEL_BUILDER(
     Name("InitializeTableFromTextFileV2").Device(DEVICE_CPU),
     InitializeTableFromTextFileOp);
 
-class InitializeTableFromDatasetOp : public AsyncOpKernel {
- public:
-  explicit InitializeTableFromDatasetOp(OpKernelConstruction* ctx)
-      : AsyncOpKernel(ctx),
-        background_worker_(ctx->env(), "initialize_table_from_dataset") {}
-
-  void ComputeAsync(OpKernelContext* ctx, DoneCallback done) override {
-    lookup::InitializableLookupTable* table;
-    OP_REQUIRES_OK_ASYNC(
-        ctx, GetInitializableLookupTable("table_handle", ctx, &table), done);
-    core::ScopedUnref unref_me(table);
-    data::DatasetBase* dataset;
-    OP_REQUIRES_OK_ASYNC(
-        ctx, GetDatasetFromVariantTensor(ctx->input(1), &dataset), done);
-    background_worker_.Schedule([ctx, dataset, table, done]() {
-      lookup::InitializeTableFromDataset(ctx, dataset, table, done);
-    });
-  }
-
- private:
-  TF_DISALLOW_COPY_AND_ASSIGN(InitializeTableFromDatasetOp);
-
-  data::BackgroundWorker background_worker_;
-};
-
-REGISTER_KERNEL_BUILDER(Name("InitializeTableFromDataset").Device(DEVICE_CPU),
-                        InitializeTableFromDatasetOp);
 }  // namespace tensorflow

@@ -18,7 +18,6 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/device.h"
 #include "tensorflow/core/common_runtime/eager/eager_executor.h"
 #include "tensorflow/core/common_runtime/eager/tensor_handle.h"
-#include "tensorflow/core/framework/allocator.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/lib/core/status.h"
 
@@ -26,65 +25,43 @@ namespace tensorflow {
 
 class CopyToDeviceNode : public EagerNode {
  public:
-  CopyToDeviceNode(TensorHandle* src, TensorHandle* dst, Device* dstd,
-                   const EagerContext& ctx, bool async, bool mirror)
-      : EagerNode(),
+  CopyToDeviceNode(TensorHandle* src, Device* dstd, EagerContext* ctx)
+      : EagerNode(ctx->NextId()),
         src_(src),
-        dst_(dst),
         dstd_(dstd),
         ctx_(ctx),
-        async_(async),
-        mirror_(mirror) {
-    if (async_) {
-      src_->Ref();
-      dst_->Ref();
-    }
+        dst_(new TensorHandle(id, src_->dtype, ctx)) {
+    src_->Ref();
+    dst_->Ref();
   }
 
   ~CopyToDeviceNode() override {
-    if (async_) {
-      src_->Unref();
-      dst_->Unref();
-    }
+    src_->Unref();
+    dst_->Unref();
   }
 
   Status Run() override {
-    tensorflow::Tensor tensor;
-    ScopedMemoryDebugAnnotation op_annotation(
-        "eager::CopyToDeviceNode", "dynamic", tensor.dtype(), &tensor.shape());
-    TF_RETURN_IF_ERROR(src_->CopyToDevice(ctx_, dstd_, &tensor));
-    if (!async_ && mirror_) {
-      Status s = dst_->AddLocalMirror(std::move(tensor), dstd_);
-      // If a mirror was added since we called HasLocalMirror then just return
-      // and ignore the error.
-      if (s.ok() || (s.code() == error::Code::ALREADY_EXISTS)) {
-        return Status::OK();
-      }
-      return s;
-    } else {
-      return dst_->SetTensor(std::move(tensor), dstd_);
-    }
-  }
-
-  void Abort(Status status) override { dst_->Poison(status, dstd_); }
-
-  string DebugString() const override {
-    string out = "[CopyToDeviceNode]";
-    strings::StrAppend(&out, " src_tensor: ", src_->DebugString());
-    strings::StrAppend(&out, ", dst_tensor: ", dst_->DebugString());
-    strings::StrAppend(&out, ", dst_device: ", dstd_ ? dstd_->name() : "[]");
-    return out;
+    TensorHandle* temp = nullptr;
+    TF_RETURN_IF_ERROR(src_->CopyToDevice(ctx_, dstd_, &temp));
+    const Tensor* tensor = nullptr;
+    Device* device = nullptr;
+    Device* op_device = nullptr;
+    Status status = temp->TensorAndDevice(&tensor, &device, &op_device);
+    // `temp` is a ready handle. So the following call should return OK.
+    TF_DCHECK_OK(status) << status.error_message();
+    DCHECK(tensor);
+    dst_->SetTensorAndDevice(*tensor, device, op_device);
+    temp->Unref();
+    return Status::OK();
   }
 
   TensorHandle* dst() { return dst_; }
 
  private:
   TensorHandle* src_;
-  TensorHandle* dst_;
   Device* dstd_;
-  const EagerContext& ctx_;
-  bool async_;
-  bool mirror_;
+  EagerContext* ctx_;
+  TensorHandle* dst_;
 };
 
 }  // namespace tensorflow

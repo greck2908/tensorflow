@@ -28,7 +28,7 @@ typedef Eigen::GpuDevice GPUDevice;
 
 namespace tensorflow {
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 template <typename T>
 void DnnPooling3dOp<T>::Compute(OpKernelContext* context,
@@ -98,27 +98,12 @@ void DnnPooling3dOp<T>::Compute(OpKernelContext* context,
   auto* stream = context->op_device_context()->stream();
   OP_REQUIRES(context, stream, errors::Internal("No GPU stream available."));
 
-#if TENSORFLOW_USE_ROCM
-  static int64 PoolingScratchSize = GetDnnWorkspaceLimit(
-      // default value is in bytes despite the name of the environment variable
-      "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32  // 4GB
-  );
-
-  DnnScratchAllocator scratch_allocator(PoolingScratchSize, context);
-  bool status =
-      stream
-          ->ThenPoolForward(pooling_desc, input_desc, input_data, output_desc,
-                            &output_data, &scratch_allocator)
-          .ok();
-#else
   bool status = stream
                     ->ThenPoolForward(pooling_desc, input_desc, input_data,
                                       output_desc, &output_data)
                     .ok();
-#endif
-
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolForward launch failed"));
+              errors::Internal("cudnn PoolForward launch failed"));
 
   if (data_format == FORMAT_NHWC) {
     auto toConstTensor = [](const Tensor& x) -> const Tensor { return x; };
@@ -240,30 +225,14 @@ void DnnPooling3dGradOp<T>::Compute(
   auto* stream = context->op_device_context()->stream();
   OP_REQUIRES(context, stream, errors::Internal("No GPU stream available."));
 
-#if TENSORFLOW_USE_ROCM
-  static int64 PoolingScratchSize = GetDnnWorkspaceLimit(
-      // default value is in bytes despite the name of the environment variable
-      "TF_CUDNN_WORKSPACE_LIMIT_IN_MB", 1LL << 32  // 4GB
-  );
-
-  DnnScratchAllocator scratch_allocator(PoolingScratchSize, context);
-  bool status = stream
-                    ->ThenPoolBackward(pooling_desc, orig_input_desc,
-                                       orig_input_data, orig_output_desc,
-                                       orig_output_data, output_backprop_data,
-                                       &input_backprop_data, &scratch_allocator)
-                    .ok();
-#else
   bool status =
       stream
           ->ThenPoolBackward(pooling_desc, orig_input_desc, orig_input_data,
                              orig_output_desc, orig_output_data,
                              output_backprop_data, &input_backprop_data)
           .ok();
-#endif
-
   OP_REQUIRES(context, status,
-              errors::Internal("dnn PoolBackward launch failed"));
+              errors::Internal("cudnn PoolBackward launch failed"));
 
   if (data_format == FORMAT_NHWC) {
     auto toConstTensor = [](const Tensor& x) -> const Tensor { return x; };
@@ -280,6 +249,6 @@ void DnnPooling3dGradOp<T>::Compute(
 TF_CALL_float(DEFINE_DNN_OPS) TF_CALL_half(DEFINE_DNN_OPS)
 #undef DEFINE_DNN_OPS
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 
 }  // namespace tensorflow

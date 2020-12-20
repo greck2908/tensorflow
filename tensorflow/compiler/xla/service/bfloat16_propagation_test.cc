@@ -22,7 +22,7 @@ limitations under the License.
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/test.h"
 #include "tensorflow/compiler/xla/test_helpers.h"
-#include "tensorflow/compiler/xla/tests/hlo_test_base.h"
+#include "tensorflow/compiler/xla/tests/hlo_verified_test_base.h"
 #include "tensorflow/compiler/xla/tests/literal_test_util.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
@@ -55,11 +55,11 @@ class TestBFloat16Support : public BFloat16Support {
   }
 };
 
-class BFloat16PropagationTest : public HloTestBase {
+class BFloat16PropagationTest : public HloVerifiedTestBase {
  protected:
   BFloat16PropagationTest()
-      : HloTestBase(/*verifier_layout_sensitive=*/false,
-                    /*allow_mixed_precision_in_hlo_verifier=*/true) {}
+      : HloVerifiedTestBase(/*layout_sensitive=*/false,
+                            /*allow_mixed_precision=*/true) {}
 
   // Runs the propagation pass on the given module, and returns whether the
   // module is changed after this pass.
@@ -109,8 +109,8 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSelectButNotAdd) {
       HloInstruction::CreateBinary(shape, HloOpcode::kAdd, a, b));
   HloInstruction* add1 = builder.AddInstruction(
       HloInstruction::CreateBinary(shape, HloOpcode::kAdd, add0, b));
-  HloInstruction* pred = builder.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {2, 4}), a, b, ComparisonDirection::kEq));
+  HloInstruction* pred = builder.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {2, 4}), HloOpcode::kEq, a, b));
   HloInstruction* sel = builder.AddInstruction(
       HloInstruction::CreateTernary(shape, HloOpcode::kSelect, pred, c, add1));
   HloInstruction* xpose =
@@ -121,10 +121,10 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSelectButNotAdd) {
   HloInstruction* root = builder.AddInstruction(HloInstruction::CreateBinary(
       ShapeUtil::MakeShape(F32, {4, 4}), HloOpcode::kAdd, dot, dot));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), root);
   EXPECT_TRUE(OutputsBF16(xpose));
@@ -134,97 +134,6 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSelectButNotAdd) {
   EXPECT_FALSE(OutputsBF16(a));
   EXPECT_FALSE(OutputsBF16(b));
   EXPECT_FALSE(OutputsBF16(c));
-}
-
-TEST_F(BFloat16PropagationTest, PropagateThroughMaxPoolReduceWindow) {
-  auto module = CreateNewVerifiedModule();
-
-  auto sub_builder = HloComputation::Builder("max");
-  HloInstruction* p0 = sub_builder.AddInstruction(
-      HloInstruction::CreateParameter(0, ShapeUtil::MakeShape(F32, {}), "a"));
-  HloInstruction* p1 = sub_builder.AddInstruction(
-      HloInstruction::CreateParameter(1, ShapeUtil::MakeShape(F32, {}), "b"));
-  sub_builder.AddInstruction(HloInstruction::CreateBinary(
-      ShapeUtil::MakeShape(F32, {}), HloOpcode::kMaximum, p0, p1));
-  auto max_computation = module->AddEmbeddedComputation(sub_builder.Build());
-
-  auto builder = HloComputation::Builder(TestName());
-  Shape shape = ShapeUtil::MakeShape(F32, {2, 4});
-
-  HloInstruction* a =
-      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "a"));
-  HloInstruction* b =
-      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "b"));
-  HloInstruction* c =
-      builder.AddInstruction(HloInstruction::CreateParameter(2, shape, "c"));
-  HloInstruction* add = builder.AddInstruction(
-      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, a, b));
-  Window window;
-  WindowDimension dim;
-  dim.set_size(2);
-  dim.set_stride(1);
-  dim.set_padding_high(1);
-  dim.set_window_dilation(1);
-  dim.set_base_dilation(1);
-  *window.add_dimensions() = dim;
-  *window.add_dimensions() = dim;
-  HloInstruction* rw =
-      builder.AddInstruction(HloInstruction::CreateReduceWindow(
-          shape, add,
-          builder.AddInstruction(
-              HloInstruction::CreateConstant(LiteralUtil::Zero(F32))),
-          window, max_computation));
-  HloInstruction* xpose =
-      builder.AddInstruction(HloInstruction::CreateTranspose(
-          ShapeUtil::MakeShape(F32, {4, 2}), c, {1, 0}));
-  HloInstruction* dot = builder.AddInstruction(
-      CreateDot(ShapeUtil::MakeShape(F32, {4, 4}), xpose, rw));
-  HloInstruction* root = builder.AddInstruction(HloInstruction::CreateBinary(
-      ShapeUtil::MakeShape(F32, {4, 4}), HloOpcode::kAdd, dot, dot));
-
-  auto computation = module->AddEntryComputation(builder.Build());
-
-  EXPECT_TRUE(PropagatePrecision(module.get()));
-
-  EXPECT_EQ(computation->root_instruction(), root);
-  EXPECT_TRUE(OutputsBF16(add));
-  EXPECT_TRUE(OutputsBF16(xpose));
-  EXPECT_TRUE(OutputsBF16(rw));
-}
-
-// Tests that side-effecting all-reduce should not be changed.
-TEST_F(BFloat16PropagationTest, DoNotChangeAllReduce) {
-  auto module = CreateNewVerifiedModule();
-
-  auto builder = HloComputation::Builder(TestName());
-  Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
-  HloInstruction* a =
-      builder.AddInstruction(HloInstruction::CreateParameter(0, shape, "a"));
-  HloInstruction* b =
-      builder.AddInstruction(HloInstruction::CreateParameter(1, shape, "b"));
-  auto rb = HloComputation::Builder(TestName());
-  rb.AddInstruction(HloInstruction::CreateBinary(
-      shape, HloOpcode::kAdd,
-      rb.AddInstruction(HloInstruction::CreateParameter(0, shape, "p0")),
-      rb.AddInstruction(HloInstruction::CreateParameter(1, shape, "p1"))));
-  auto reduction = module->AddEmbeddedComputation(rb.Build());
-  HloInstruction* all_reduce =
-      builder.AddInstruction(HloInstruction::CreateAllReduce(
-          ShapeUtil::MakeTupleShape({shape, shape}), {a, b}, reduction,
-          /*replica_groups=*/{}, /*constrain_layout=*/false,
-          /*channel_id=*/1, /*use_global_device_ids=*/false));
-  HloInstruction* gte0 = builder.AddInstruction(
-      HloInstruction::CreateGetTupleElement(shape, all_reduce, 0));
-  HloInstruction* gte1 = builder.AddInstruction(
-      HloInstruction::CreateGetTupleElement(shape, all_reduce, 1));
-  HloInstruction* dot = builder.AddInstruction(CreateDot(shape, gte0, gte1));
-  HloInstruction* root = builder.AddInstruction(
-      HloInstruction::CreateBinary(shape, HloOpcode::kAdd, dot, dot));
-
-  auto computation = module->AddEntryComputation(builder.Build());
-
-  EXPECT_FALSE(PropagatePrecision(module.get()));
-  EXPECT_EQ(computation->root_instruction(), root);
 }
 
 // Tests that if a constant is converted to BF16 then its literal must also be
@@ -243,10 +152,10 @@ TEST_F(BFloat16PropagationTest, ConvertConstantLiteral) {
       HloInstruction::CreateConstant(LiteralUtil::CreateFromArray(array_b)));
   HloInstruction* dot = builder.AddInstruction(CreateDot(shape, a, b));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_TRUE(OutputsBF16(dot->operand(0)));
@@ -299,10 +208,10 @@ TEST_F(BFloat16PropagationTest, PropagateThroughTuples) {
   HloInstruction* output_tuple =
       builder.AddInstruction(HloInstruction::CreateTuple({dot, add2}));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), output_tuple);
   EXPECT_TRUE(OutputsBF16(xpose));
@@ -338,10 +247,10 @@ TEST_F(BFloat16PropagationTest, SameValueReferencedTwice) {
   HloInstruction* dot = builder.AddInstruction(
       CreateDot(ShapeUtil::MakeShape(F32, {4, 4}), lhs, rhs));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_TRUE(OutputsBF16(add1));
@@ -367,10 +276,10 @@ TEST_F(BFloat16PropagationTest, DoNotChangeComputationRoot) {
   HloInstruction* tuple =
       builder.AddInstruction(HloInstruction::CreateTuple({add, dot}));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_FALSE(PropagatePrecision(module.get()));
+  EXPECT_FALSE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), tuple);
   EXPECT_FALSE(OutputsBF16(add));
@@ -378,7 +287,7 @@ TEST_F(BFloat16PropagationTest, DoNotChangeComputationRoot) {
 
 // Tests that BF16 is propagated properly through fused computations.
 TEST_F(BFloat16PropagationTest, PropagateThroughFusion) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -413,7 +322,7 @@ TEST_F(BFloat16PropagationTest, PropagateThroughFusion) {
 
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), fusion1);
   EXPECT_TRUE(OutputsBF16(add));
@@ -423,39 +332,10 @@ TEST_F(BFloat16PropagationTest, PropagateThroughFusion) {
   EXPECT_TRUE(OutputsBF16(b_f1));
 }
 
-// Tests that a fusion with a bitcast-convert as its root is changed via adding
-// extra convert, instead of changing the type in-place.
-TEST_F(BFloat16PropagationTest, FusionWithBitcastConvertRoot) {
-  auto module = CreateNewVerifiedModule();
-  auto builder = HloComputation::Builder(TestName());
-  Shape u32_shape = ShapeUtil::MakeShape(U32, {4, 4});
-  Shape f32_shape = ShapeUtil::MakeShape(F32, {4, 4});
-
-  HloInstruction* param = builder.AddInstruction(
-      HloInstruction::CreateParameter(0, u32_shape, "param"));
-
-  auto builder_f = HloComputation::Builder("fusion");
-  HloInstruction* a_f = builder_f.AddInstruction(
-      HloInstruction::CreateParameter(0, u32_shape, "a"));
-  HloInstruction* bc_f = builder_f.AddInstruction(
-      HloInstruction::CreateBitcastConvert(f32_shape, a_f));
-  auto comp_f = module->AddEmbeddedComputation(builder_f.Build());
-  auto fusion = builder.AddInstruction(HloInstruction::CreateFusion(
-      f32_shape, HloInstruction::FusionKind::kLoop, {param}, comp_f));
-  auto dot = builder.AddInstruction(CreateDot(f32_shape, fusion, fusion));
-
-  auto computation = module->AddEntryComputation(builder.Build());
-  EXPECT_TRUE(PropagatePrecision(module.get()));
-
-  EXPECT_EQ(computation->root_instruction(), dot);
-  EXPECT_EQ(bc_f->shape(), f32_shape);
-  EXPECT_TRUE(OutputsBF16(bc_f));
-}
-
 // Tests that changes to BF16 that cannot be propagated outside a fusion are
 // discarded.
 TEST_F(BFloat16PropagationTest, DiscardFusionInternalBF16Changes) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -479,7 +359,7 @@ TEST_F(BFloat16PropagationTest, DiscardFusionInternalBF16Changes) {
 
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_FALSE(PropagatePrecision(module.get()));
+  EXPECT_FALSE(PropagatePrecision(module));
   EXPECT_EQ(computation->root_instruction(), fusion);
 }
 
@@ -494,7 +374,7 @@ TEST_F(BFloat16PropagationTest, DiscardFusionInternalBF16Changes) {
 //   (BF16, BF16) fusion_computation(F32 a, F32 b)
 //     = tuple(BF16 convert(a), BF16 add(F32 a, F32 b))
 TEST_F(BFloat16PropagationTest, ConvertTupleFusionElementIfUsedByAdd) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -525,7 +405,7 @@ TEST_F(BFloat16PropagationTest, ConvertTupleFusionElementIfUsedByAdd) {
 
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_TRUE(OutputsBF16(gte0));
@@ -544,7 +424,7 @@ TEST_F(BFloat16PropagationTest, ConvertTupleFusionElementIfUsedByAdd) {
 // on_true and on_false must match, so that as long as one of them is F32, the
 // other must be F32 as well.
 TEST_F(BFloat16PropagationTest, SelectOverTuples) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {2, 4});
 
@@ -575,7 +455,7 @@ TEST_F(BFloat16PropagationTest, SelectOverTuples) {
 
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_FALSE(OutputsBF16(add0));
@@ -588,7 +468,7 @@ TEST_F(BFloat16PropagationTest, SelectOverTuples) {
 // Tests that BF16 is propagated properly through a while computation with
 // non-tuple input/output.
 TEST_F(BFloat16PropagationTest, PropagateThroughSimpleWhile) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -604,8 +484,8 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSimpleWhile) {
       HloInstruction::CreateParameter(0, shape, "cond_param"));
   auto cond_dot =
       builder_cond.AddInstruction(CreateDot(shape, cond_param, cond_param));
-  auto cond_root = builder_cond.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}),
+  auto cond_root = builder_cond.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {}), HloOpcode::kGt,
       builder_cond.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
           builder_cond.AddInstruction(
@@ -613,10 +493,9 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSimpleWhile) {
                                           cond_dot, {0, 0}, {1, 1}, {1, 1})))),
       builder_cond.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
-          builder_cond.AddInstruction(
-              HloInstruction::CreateSlice(ShapeUtil::MakeShape(F32, {1, 1}),
-                                          cond_dot, {1, 1}, {2, 2}, {1, 1})))),
-      ComparisonDirection::kGt));
+          builder_cond.AddInstruction(HloInstruction::CreateSlice(
+              ShapeUtil::MakeShape(F32, {1, 1}), cond_dot, {1, 1}, {2, 2},
+              {1, 1}))))));
   auto cond = module->AddEmbeddedComputation(builder_cond.Build());
 
   auto builder_body = HloComputation::Builder("body");
@@ -632,7 +511,7 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSimpleWhile) {
   auto dot = builder.AddInstruction(CreateDot(shape, while_hlo, while_hlo));
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_TRUE(
@@ -648,7 +527,7 @@ TEST_F(BFloat16PropagationTest, PropagateThroughSimpleWhile) {
 // made to the while body and thus the fusion node inside it.
 TEST_F(BFloat16PropagationTest,
        ConditionPreventsPropagationForFusionInsideWhile) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -662,8 +541,8 @@ TEST_F(BFloat16PropagationTest,
   auto builder_cond = HloComputation::Builder("cond");
   auto cond_param = builder_cond.AddInstruction(
       HloInstruction::CreateParameter(0, shape, "cond_param"));
-  builder_cond.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}),
+  builder_cond.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {}), HloOpcode::kGt,
       builder_cond.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
           builder_cond.AddInstruction(HloInstruction::CreateSlice(
@@ -673,8 +552,7 @@ TEST_F(BFloat16PropagationTest,
           ShapeUtil::MakeShape(F32, {}),
           builder_cond.AddInstruction(HloInstruction::CreateSlice(
               ShapeUtil::MakeShape(F32, {1, 1}), cond_param, {1, 1}, {2, 2},
-              {1, 1})))),
-      ComparisonDirection::kGt));
+              {1, 1}))))));
   auto cond = module->AddEmbeddedComputation(builder_cond.Build());
 
   auto builder_body = HloComputation::Builder("body");
@@ -698,7 +576,7 @@ TEST_F(BFloat16PropagationTest,
   auto dot = builder.AddInstruction(CreateDot(shape, while_hlo, while_hlo));
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_FALSE(PropagatePrecision(module.get()));
+  EXPECT_FALSE(PropagatePrecision(module));
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_FALSE(OutputsBF16(add));
   EXPECT_FALSE(OutputsBF16(body_fusion));
@@ -710,7 +588,7 @@ TEST_F(BFloat16PropagationTest,
 // Tests that BF16 is propagated properly through while computations with
 // tuple-shaped input/output.
 TEST_F(BFloat16PropagationTest, PropagateThroughTupleWhile) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -737,8 +615,8 @@ TEST_F(BFloat16PropagationTest, PropagateThroughTupleWhile) {
       HloInstruction::CreateBinary(shape, HloOpcode::kAdd, cond_rhs, cond_rhs));
   auto cond_dot =
       builder_cond.AddInstruction(CreateDot(shape, cond_lhs, cond_add_rhs));
-  builder_cond.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}),
+  builder_cond.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {}), HloOpcode::kGt,
       builder_cond.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
           builder_cond.AddInstruction(
@@ -746,10 +624,9 @@ TEST_F(BFloat16PropagationTest, PropagateThroughTupleWhile) {
                                           cond_dot, {0, 0}, {1, 1}, {1, 1})))),
       builder_cond.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
-          builder_cond.AddInstruction(
-              HloInstruction::CreateSlice(ShapeUtil::MakeShape(F32, {1, 1}),
-                                          cond_dot, {1, 1}, {2, 2}, {1, 1})))),
-      ComparisonDirection::kGt));
+          builder_cond.AddInstruction(HloInstruction::CreateSlice(
+              ShapeUtil::MakeShape(F32, {1, 1}), cond_dot, {1, 1}, {2, 2},
+              {1, 1}))))));
   auto cond = module->AddEmbeddedComputation(builder_cond.Build());
 
   auto builder_body = HloComputation::Builder("body");
@@ -779,7 +656,7 @@ TEST_F(BFloat16PropagationTest, PropagateThroughTupleWhile) {
   auto dot = builder.AddInstruction(CreateDot(shape, lhs, rhs));
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), dot);
   EXPECT_TRUE(OutputsBF16(lhs));
@@ -798,7 +675,7 @@ TEST_F(BFloat16PropagationTest, PropagateThroughTupleWhile) {
 // Tests that BF16 is not propagated through multiple whiles that invoke the
 // same computation as long as one while prevents the propagation.
 TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto builder = HloComputation::Builder(TestName());
   Shape shape = ShapeUtil::MakeShape(F32, {4, 4});
 
@@ -833,8 +710,8 @@ TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
           shape, HloOpcode::kAdd, cond0_rhs, cond0_rhs));
   auto cond0_dot =
       builder_cond0.AddInstruction(CreateDot(shape, cond0_lhs, cond0_add_rhs));
-  builder_cond0.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}),
+  builder_cond0.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {}), HloOpcode::kGt,
       builder_cond0.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
           builder_cond0.AddInstruction(
@@ -842,10 +719,9 @@ TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
                                           cond0_dot, {0, 0}, {1, 1}, {1, 1})))),
       builder_cond0.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
-          builder_cond0.AddInstruction(
-              HloInstruction::CreateSlice(ShapeUtil::MakeShape(F32, {1, 1}),
-                                          cond0_dot, {1, 1}, {2, 2}, {1, 1})))),
-      ComparisonDirection::kGt));
+          builder_cond0.AddInstruction(HloInstruction::CreateSlice(
+              ShapeUtil::MakeShape(F32, {1, 1}), cond0_dot, {1, 1}, {2, 2},
+              {1, 1}))))));
   auto cond0 = module->AddEmbeddedComputation(builder_cond0.Build());
 
   // Condition computation for the second while.
@@ -862,8 +738,8 @@ TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
           shape, HloOpcode::kAdd, cond1_lhs, cond1_lhs));
   auto cond1_dot =
       builder_cond1.AddInstruction(CreateDot(shape, cond1_add_lhs, cond1_rhs));
-  builder_cond1.AddInstruction(HloInstruction::CreateCompare(
-      ShapeUtil::MakeShape(PRED, {}),
+  builder_cond1.AddInstruction(HloInstruction::CreateBinary(
+      ShapeUtil::MakeShape(PRED, {}), HloOpcode::kGt,
       builder_cond1.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
           builder_cond1.AddInstruction(
@@ -871,10 +747,9 @@ TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
                                           cond1_dot, {0, 0}, {1, 1}, {1, 1})))),
       builder_cond1.AddInstruction(HloInstruction::CreateReshape(
           ShapeUtil::MakeShape(F32, {}),
-          builder_cond1.AddInstruction(
-              HloInstruction::CreateSlice(ShapeUtil::MakeShape(F32, {1, 1}),
-                                          cond1_dot, {1, 1}, {2, 2}, {1, 1})))),
-      ComparisonDirection::kGt));
+          builder_cond1.AddInstruction(HloInstruction::CreateSlice(
+              ShapeUtil::MakeShape(F32, {1, 1}), cond1_dot, {1, 1}, {2, 2},
+              {1, 1}))))));
   auto cond1 = module->AddEmbeddedComputation(builder_cond1.Build());
 
   // Body computation shared by both whiles.
@@ -911,7 +786,7 @@ TEST_F(BFloat16PropagationTest, DoNotPropagateWhilesCallingSameComputation) {
   auto dot = builder.AddInstruction(CreateDot(shape, lhs, rhs));
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
   EXPECT_FALSE(OutputsBF16(body_dot));
   EXPECT_FALSE(OutputsBF16(body_rhs));
   EXPECT_FALSE(OutputsBF16(body_lhs));
@@ -950,10 +825,10 @@ TEST_F(BFloat16PropagationTest, NoopConversionRemoved) {
   HloInstruction* add2 = builder.AddInstruction(HloInstruction::CreateBinary(
       bf16_shape, HloOpcode::kAdd, convert0, convert1));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), add2);
   EXPECT_EQ(add2->operand(0), add0);
@@ -986,10 +861,10 @@ TEST_F(BFloat16PropagationTest, TupleDomain) {
   HloInstruction* root = builder.AddInstruction(
       HloInstruction::CreateBinary(shape, HloOpcode::kAdd, dot, dot));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
   EXPECT_EQ(computation->root_instruction(), root);
 
   // test BF16 propagated through domain
@@ -1032,10 +907,10 @@ TEST_F(BFloat16PropagationTest, TupleDomainNoPropagation) {
   HloInstruction* root = builder.AddInstruction(
       HloInstruction::CreateBinary(shape, HloOpcode::kAdd, dot, dot));
 
-  auto module = CreateNewVerifiedModule();
+  auto module = CreateNewModule();
   auto computation = module->AddEntryComputation(builder.Build());
 
-  EXPECT_TRUE(PropagatePrecision(module.get()));
+  EXPECT_TRUE(PropagatePrecision(module));
 
   EXPECT_EQ(computation->root_instruction(), root);
   EXPECT_TRUE(OutputsBF16(a_trans));
@@ -1044,225 +919,6 @@ TEST_F(BFloat16PropagationTest, TupleDomainNoPropagation) {
   EXPECT_FALSE(OutputsBF16(b_gte));
   EXPECT_FALSE(OutputsBF16(domain));
   EXPECT_FALSE(OutputsBF16(param));
-}
-
-TEST_F(BFloat16PropagationTest, ConditionalSeparateBranchOperands) {
-  const string module_str = R"(
-HloModule module
-
-true_branch {
-  true_param = f32[4096,4096] parameter(0)
-  ROOT max = f32[4096,4096] maximum(true_param, true_param)
-}
-
-false_branch {
-  false_param = f32[4096,4096] parameter(0)
-  ROOT add = f32[4096,4096] add(false_param, false_param)
-}
-
-ENTRY entry {
-  param0 = f32[4096,4096] parameter(0)
-  param1 = f32[4096,4096] parameter(1)
-  copy0 = f32[4096,4096] copy(param0)
-  copy1 = f32[4096,4096] copy(param1)
-  param2 = pred[] parameter(2)
-  conditional = f32[4096,4096] conditional(param2, copy0, copy1),
-    true_computation=true_branch, false_computation=false_branch
-  ROOT dot = f32[4096,4096] dot(conditional, conditional),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-  EXPECT_TRUE(PropagatePrecision(module.get()));
-
-  auto cond = FindInstruction(module.get(), "conditional");
-  auto copy0 = FindInstruction(module.get(), "copy0");
-  auto copy1 = FindInstruction(module.get(), "copy1");
-  EXPECT_TRUE(OutputsBF16(cond));
-  EXPECT_TRUE(OutputsBF16(copy0));
-  EXPECT_FALSE(OutputsBF16(copy1));
-}
-
-TEST_F(BFloat16PropagationTest, ConditionalSharedBranchOperands) {
-  const string module_str = R"(
-HloModule module
-
-true_branch {
-  true_param = f32[4096,4096] parameter(0)
-  ROOT max = f32[4096,4096] maximum(true_param, true_param)
-}
-
-false_branch {
-  false_param = f32[4096,4096] parameter(0)
-  ROOT add = f32[4096,4096] add(false_param, false_param)
-}
-
-ENTRY entry {
-  param0 = f32[4096,4096] parameter(0)
-  copy0 = f32[4096,4096] copy(param0)
-  param1 = pred[] parameter(1)
-  conditional = f32[4096,4096] conditional(param1, copy0, copy0),
-    true_computation=true_branch, false_computation=false_branch
-  ROOT dot = f32[4096,4096] dot(conditional, conditional),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-  EXPECT_TRUE(PropagatePrecision(module.get()));
-
-  auto cond = FindInstruction(module.get(), "conditional");
-  auto copy0 = FindInstruction(module.get(), "copy0");
-  EXPECT_TRUE(OutputsBF16(cond));
-  EXPECT_FALSE(OutputsBF16(copy0));
-}
-
-TEST_F(BFloat16PropagationTest, ConditionalAliasingOutputs) {
-  const string module_str = R"(
-HloModule module
-
-true_branch {
-  true_param = f32[4096,4096] parameter(0)
-  max = f32[4096,4096] maximum(true_param, true_param)
-  ROOT true_tuple = (f32[4096,4096], f32[4096,4096]) tuple(max, max)
-}
-
-false_branch {
-  false_param = f32[4096,4096] parameter(0)
-  min = f32[4096,4096] minimum(false_param, false_param)
-  max2 = f32[4096,4096] maximum(false_param, false_param)
-  ROOT false_tuple = (f32[4096,4096], f32[4096,4096]) tuple(min, max2)
-}
-
-ENTRY entry {
-  param0 = f32[4096,4096] parameter(0)
-  copy0 = f32[4096,4096] copy(param0)
-  param1 = pred[] parameter(1)
-  conditional = (f32[4096,4096], f32[4096,4096]) conditional(param1, copy0, copy0),
-    true_computation=true_branch, false_computation=false_branch
-  gte0 = f32[4096,4096] get-tuple-element(conditional), index=0
-  gte1 = f32[4096,4096] get-tuple-element(conditional), index=1
-  dot = f32[4096,4096] dot(gte0, gte1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-  ROOT tuple = (f32[4096,4096], f32[4096,4096]) tuple(dot, gte1)
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-  EXPECT_FALSE(PropagatePrecision(module.get()));
-}
-
-TEST_F(BFloat16PropagationTest, DynamicUpdateSlice) {
-  // This test is crafted so that the DUS has an f32 input (due to parameter)
-  // and bf16 output (due to dot). But we should enforce DUS operand 0 and
-  // output to get the same precision since it's an in-place operation.
-  const string module_str = R"(
-HloModule Module
-
-ENTRY main {
-  param = f32[128,128] parameter(0)
-  constant.1 = f32[] constant(0)
-  broadcast.6 = f32[128,1] broadcast(constant.1), dimensions={}
-  constant.3 = s32[] constant(0)
-  dynamic-update-slice = f32[128,128] dynamic-update-slice(param, broadcast.6, constant.3, constant.3)
-  ROOT dot = f32[128,128] dot(dynamic-update-slice, dynamic-update-slice), lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-  EXPECT_FALSE(PropagatePrecision(module.get()));
-
-  HloInstruction* dus = module->entry_computation()->GetInstructionWithName(
-      "dynamic-update-slice");
-  EXPECT_FALSE(OutputsBF16(dus));
-}
-
-// This test demonstrates the need for invoking the ResolveAliasingBuffer
-// multiple times via a fixed-point algorithm. The key was the aliasing of the
-// two output buffers of the conditional, at subshape 0 (first element). This
-// aliasing is not resolved until after the gte0 variale is already processed,
-// triggering incorrect type for gte0 if not repeating the aliasing analysis.
-TEST_F(BFloat16PropagationTest, ConditionalGTEWithFusion) {
-  const string module_str = R"(
-HloModule module
-
-%add.0 (x: f32[4096,4096], y: f32[4096,4096]) -> f32[4096,4096] {
-  x.1 = f32[4096,4096] parameter(0)
-  y.1 = f32[4096,4096] parameter(1)
-  ROOT dot1 = f32[4096,4096] dot(x.1, y.1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-%add.1 (x: f32[4096,4096], y: f32[4096,4096]) -> f32[4096,4096] {
-  x.1 = f32[4096,4096] parameter(0)
-  y.1 = f32[4096,4096] parameter(1)
-  ROOT dot1 = f32[4096,4096] dot(x.1, y.1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-%add.2 (x: f32[4096,4096], y: f32[4096,4096]) -> f32[4096,4096] {
-  x.1 = f32[4096,4096] parameter(0)
-  y.1 = f32[4096,4096] parameter(1)
-  ROOT dot1 = f32[4096,4096] dot(x.1, y.1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-%add.3 (x: f32[4096,4096], y: f32[4096,4096]) -> f32[4096,4096] {
-  x.1 = f32[4096,4096] parameter(0)
-  y.1 = f32[4096,4096] parameter(1)
-  ROOT dot1 = f32[4096,4096] dot(x.1, y.1),
-    lhs_contracting_dims={1}, rhs_contracting_dims={0}
-}
-
-true_branch {
-  true_param = f32[4096,4096] parameter(0)
-  constant.1 = f32[4096,4096] constant(0)
-  add0 = f32[4096,4096] fusion(true_param,true_param), kind=kLoop, calls=add.0
-  constant.2 = f32[4096,4096] constant(0)
-  ROOT tuple.2 = (f32[4096,4096], f32[4096,4096], f32[]) tuple(true_param,add0,constant.2)
-}
-
-false_branch {
-  false_param = f32[4096,4096] parameter(0)
-  add3 = f32[4096,4096] fusion(false_param,false_param), kind=kLoop, calls=add.1
-  constant.1 = f32[4096,4096] constant(0)
-  ROOT tuple.2 = (f32[4096,4096], f32[4096,4096], f32[]) tuple(add3, add3,constant.1)
-}
-
-ENTRY entry {
-  param0 = f32[4096,4096] parameter(0)
-  copy0 = f32[4096,4096] copy(param0)
-  param1 = pred[] parameter(1)
-  conditional = (f32[4096,4096], f32[4096,4096], f32[4096,4096]) conditional(param1, param0, copy0),
-    true_computation=true_branch, false_computation=false_branch
-  gte = f32[4096,4096] get-tuple-element(conditional), index=0
-  gte1 = f32[4096,4096] get-tuple-element(conditional), index=1
-  gte2 = f32[4096,4096] get-tuple-element(conditional), index=2
-  add2 = f32[4096,4096] fusion(gte, gte1), kind=kLoop, calls=add.2
-  ROOT add3 = f32[4096,4096] fusion(add2, gte2), kind=kLoop, calls=add.3
-  }
-)";
-
-  TF_ASSERT_OK_AND_ASSIGN(std::unique_ptr<HloModule> module,
-                          ParseAndReturnVerifiedModule(module_str));
-  EXPECT_TRUE(PropagatePrecision(module.get()));
-  VLOG(2) << module->ToString() << "\n";
-  EXPECT_TRUE(HloVerifier(/*layout_sensitive=*/false,
-                          /*allow_mixed_precision=*/true)
-                  .Run(module.get())
-                  .status()
-                  .ok());
-  auto gte = FindInstruction(module.get(), "gte");
-  auto gte1 = FindInstruction(module.get(), "gte1");
-  auto gte2 = FindInstruction(module.get(), "gte2");
-  EXPECT_FALSE(OutputsBF16(gte));
-  EXPECT_FALSE(OutputsBF16(gte1));
-  EXPECT_TRUE(OutputsBF16(gte2));
 }
 
 }  // namespace xla

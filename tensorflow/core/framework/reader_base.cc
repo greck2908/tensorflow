@@ -53,16 +53,16 @@ Status ReaderBase::ResetLocked() {
   return Status::OK();
 }
 
-Status ReaderBase::SerializeState(tstring* state) {
+Status ReaderBase::SerializeState(string* state) {
   mutex_lock lock(mu_);
   return SerializeStateLocked(state);
 }
 
-Status ReaderBase::SerializeStateLocked(tstring* state) {
+Status ReaderBase::SerializeStateLocked(string* state) {
   return errors::Unimplemented("Reader SerializeState");
 }
 
-Status ReaderBase::RestoreState(const tstring& state) {
+Status ReaderBase::RestoreState(const string& state) {
   mutex_lock lock(mu_);
   Status status = RestoreStateLocked(state);
   if (!status.ok()) {
@@ -71,13 +71,13 @@ Status ReaderBase::RestoreState(const tstring& state) {
   return status;
 }
 
-Status ReaderBase::RestoreStateLocked(const tstring& state) {
+Status ReaderBase::RestoreStateLocked(const string& state) {
   return errors::Unimplemented("Reader RestoreState");
 }
 
 int64 ReaderBase::ReadUpTo(const int64 num_records, QueueInterface* queue,
-                           std::vector<tstring>* keys,
-                           std::vector<tstring>* values,
+                           std::vector<string>* keys,
+                           std::vector<string>* values,
                            OpKernelContext* context) {
   mutex_lock lock(mu_);
   int64 records_produced_this_call = 0;
@@ -133,16 +133,16 @@ int64 ReaderBase::ReadUpTo(const int64 num_records, QueueInterface* queue,
 }
 
 // Default implementation just reads one record at a time.
-Status ReaderBase::ReadUpToLocked(int64 num_records, std::vector<tstring>* keys,
-                                  std::vector<tstring>* values, int64* num_read,
+Status ReaderBase::ReadUpToLocked(int64 num_records, std::vector<string>* keys,
+                                  std::vector<string>* values, int64* num_read,
                                   bool* at_end) {
   bool produced = false;
-  tstring key;
-  tstring value;
+  string key;
+  string value;
   Status status = ReadLocked(&key, &value, &produced, at_end);
   if (produced) {
-    keys->push_back(std::move(key));
-    values->push_back(std::move(value));
+    keys->emplace_back(key);
+    values->emplace_back(value);
     *num_read = 1;
   } else {
     *num_read = 0;
@@ -150,7 +150,7 @@ Status ReaderBase::ReadUpToLocked(int64 num_records, std::vector<tstring>* keys,
   return status;
 }
 
-void ReaderBase::Read(QueueInterface* queue, tstring* key, tstring* value,
+void ReaderBase::Read(QueueInterface* queue, string* key, string* value,
                       OpKernelContext* context) {
   mutex_lock lock(mu_);
   while (true) {
@@ -202,7 +202,7 @@ string ReaderBase::GetNextWorkLocked(QueueInterface* queue,
   string work;
   Notification n;
   queue->TryDequeue(
-      context, [context, &n, &work](const QueueInterface::Tuple& tuple) {
+      context, [this, context, &n, &work](const QueueInterface::Tuple& tuple) {
         if (context->status().ok()) {
           if (tuple.size() != 1) {
             context->SetStatus(
@@ -214,7 +214,7 @@ string ReaderBase::GetNextWorkLocked(QueueInterface* queue,
             context->SetStatus(errors::InvalidArgument(
                 "Expected to dequeue a one-element string tensor"));
           } else {
-            work = tuple[0].flat<tstring>()(0);
+            work = tuple[0].flat<string>()(0);
           }
         }
         n.Notify();
@@ -228,10 +228,10 @@ void ReaderBase::SaveBaseState(ReaderBaseState* state) const {
   state->set_work_started(work_started_);
   state->set_work_finished(work_finished_);
   state->set_num_records_produced(num_records_produced_);
-  state->set_current_work(work_.data(), work_.size());
+  state->set_current_work(work_);
 }
 
-tstring ReaderBase::KeyName(const tstring& key) const {
+string ReaderBase::KeyName(const string& key) const {
   return strings::StrCat(current_work(), ":", key);
 }
 
@@ -241,7 +241,7 @@ Status ReaderBase::RestoreBaseState(const ReaderBaseState& state) {
   num_records_produced_ = state.num_records_produced();
   work_ = state.current_work();
   if (work_started_ < 0 || work_finished_ < 0 || num_records_produced_ < 0) {
-#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+#ifdef __ANDROID__
     const string debug_string = "<debug state not available>";
 #else
     const string debug_string = state.DebugString();
@@ -251,7 +251,7 @@ Status ReaderBase::RestoreBaseState(const ReaderBaseState& state) {
         debug_string);
   }
   if (work_started_ > work_finished_) {
-#if defined(__ANDROID__) || (__EMSCRIPTEN__)
+#ifdef __ANDROID__
     const string debug_string = "<debug state not available>";
 #else
     const string debug_string = state.DebugString();

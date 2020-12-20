@@ -75,7 +75,7 @@ class DeserializeSparseOp : public OpKernel {
     if (num_sparse_tensors == 1 && ndims == 1) {
       // Special case with a single sparse tensor. We can avoid data
       // motion in the Concat and Reshape.
-      const auto& serialized_sparse_t = serialized_sparse.vec<tstring>();
+      const auto& serialized_sparse_t = serialized_sparse.vec<string>();
 
       Tensor output_indices;
       Tensor output_values;
@@ -98,7 +98,7 @@ class DeserializeSparseOp : public OpKernel {
     values.reserve(num_sparse_tensors);
 
     const auto& serialized_sparse_t =
-        serialized_sparse.flat_inner_dims<tstring, 2>();
+        serialized_sparse.flat_inner_dims<string, 2>();
     for (int i = 0; i < num_sparse_tensors; ++i) {
       Tensor output_indices;
       Tensor output_values;
@@ -204,14 +204,15 @@ class DeserializeSparseOp : public OpKernel {
       target_shape.vec<int64>()(i + ndims - 1) = output.shape().data()[i + 1];
     }
 
-    ReshapeSparseTensor(context, output.indices(), input_shape, target_shape,
-                        0 /* output indices index */,
-                        2 /* output shape index */);
+    Tensor output_indices;
+    Tensor output_shape;
+    Reshape(context, output.indices(), input_shape, target_shape,
+            0 /* output indices index */, 2 /* output shape index */);
     context->set_output(1, output.values());
   }
 
  private:
-  Status Deserialize(const tstring& serialized, Tensor* result) {
+  Status Deserialize(const string& serialized, Tensor* result) {
     TensorProto proto;
     if (!ParseProtoUnlimited(&proto, serialized)) {
       return errors::InvalidArgument("Could not parse serialized proto");
@@ -225,8 +226,8 @@ class DeserializeSparseOp : public OpKernel {
   }
 
   Status GetAndValidateSparseTensor(
-      const tstring& serialized_indices, const tstring& serialized_values,
-      const tstring& serialized_shape, DataType values_dtype, int index,
+      const string& serialized_indices, const string& serialized_values,
+      const string& serialized_shape, DataType values_dtype, int index,
       Tensor* output_indices, Tensor* output_values, Tensor* output_shape) {
     // Deserialize and validate the indices.
     TF_RETURN_IF_ERROR(this->Deserialize(serialized_indices, output_indices));
@@ -284,7 +285,7 @@ class DeserializeSparseOp : public OpKernel {
 
 REGISTER_KERNEL_BUILDER(Name("DeserializeSparse")
                             .Device(DEVICE_CPU)
-                            .TypeConstraint<tstring>("Tserialized"),
+                            .TypeConstraint<string>("Tserialized"),
                         DeserializeSparseOp)
 
 REGISTER_KERNEL_BUILDER(Name("DeserializeManySparse").Device(DEVICE_CPU),

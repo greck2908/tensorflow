@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <utility>
 
+#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/platform/logging.h"
 
 namespace tensorflow {
@@ -44,7 +45,7 @@ const TensorSliceReader* TensorSliceReaderCacheWrapper::GetReader(
 TensorSliceReaderCache::TensorSliceReaderCache() {}
 
 TensorSliceReaderCache::~TensorSliceReaderCache() {
-  for (const auto& pair : readers_) {
+  for (auto pair : readers_) {
     delete pair.second.second;
   }
 }

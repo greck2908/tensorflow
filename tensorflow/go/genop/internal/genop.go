@@ -47,8 +47,7 @@ import (
 	"unsafe"
 
 	"github.com/golang/protobuf/proto"
-	adpb "github.com/tensorflow/tensorflow/tensorflow/go/core/framework/api_def_go_proto"
-	odpb "github.com/tensorflow/tensorflow/tensorflow/go/core/framework/op_def_go_proto"
+	pb "github.com/tensorflow/tensorflow/tensorflow/go/genop/internal/proto/tensorflow/core/framework_go_proto"
 )
 
 // GenerateFunctionsForRegisteredOps writes a Go source code file to w
@@ -70,11 +69,11 @@ func GenerateFunctionsForRegisteredOps(
 	return generateFunctionsForOps(w, ops, apimap)
 }
 
-func registeredOps() (*odpb.OpList, *apiDefMap, error) {
+func registeredOps() (*pb.OpList, *apiDefMap, error) {
 	buf := C.TF_GetAllOpList()
 	defer C.TF_DeleteBuffer(buf)
 	var (
-		list = new(odpb.OpList)
+		list = new(pb.OpList)
 		size = int(buf.length)
 		// A []byte backed by C memory.
 		// See: https://github.com/golang/go/wiki/cgo#turning-c-arrays-into-go-slices
@@ -94,9 +93,6 @@ func updateAPIDefs(m *apiDefMap, dir string) error {
 		return err
 	}
 	for _, file := range files {
-		if file.IsDir() || !strings.HasSuffix(file.Name(), ".pbtxt") {
-			continue
-		}
 		data, err := ioutil.ReadFile(path.Join(dir, file.Name()))
 		if err != nil {
 			return fmt.Errorf("failed to read %q: %v", file.Name(), err)
@@ -108,18 +104,18 @@ func updateAPIDefs(m *apiDefMap, dir string) error {
 	return nil
 }
 
-func generateFunctionsForOps(w io.Writer, ops *odpb.OpList, apimap *apiDefMap) error {
+func generateFunctionsForOps(w io.Writer, ops *pb.OpList, apimap *apiDefMap) error {
 	thisPackage := reflect.TypeOf(tmplArgs{}).PkgPath()
 	if err := tmplHeader.Execute(w, thisPackage); err != nil {
 		return err
 	}
-	denylist := map[string]bool{
+	blacklist := map[string]bool{
 		"Const":           true,
 		"PyFunc":          true,
 		"PyFuncStateless": true,
 	}
 	for _, op := range ops.Op {
-		if denylist[op.Name] {
+		if blacklist[op.Name] {
 			continue
 		}
 		apidef, err := apimap.Get(op.Name)
@@ -133,7 +129,7 @@ func generateFunctionsForOps(w io.Writer, ops *odpb.OpList, apimap *apiDefMap) e
 	return nil
 }
 
-func generateFunctionForOp(w io.Writer, op *odpb.OpDef, apidef *adpb.ApiDef) error {
+func generateFunctionForOp(w io.Writer, op *pb.OpDef, apidef *pb.ApiDef) error {
 	if strings.HasPrefix(op.Name, "_") { // Internal operation
 		return nil
 	}
@@ -268,7 +264,7 @@ func {{$.Op.Name}}{{CamelCase .RenameTo}}(value {{GoType .Type}}) {{$.Op.Name}}A
 {{- else }}
 {{- if .DescribeOutputs}}
 //
-{{- if eq (len .OutArgs) 1 }}
+{{- if ((len .OutArgs) eq 1) }}
 // Returns {{range .OutArgs}}{{MakeComment .Description}}{{end}}
 {{- else }}
 // Returns:
@@ -359,8 +355,8 @@ func {{.Op.Name}}
 )
 
 type attrWrapper struct {
-	op  *odpb.OpDef_AttrDef
-	api *adpb.ApiDef_Attr
+	op  *pb.OpDef_AttrDef
+	api *pb.ApiDef_Attr
 }
 
 func (a *attrWrapper) Name() string              { return a.api.Name }
@@ -373,8 +369,8 @@ func (a *attrWrapper) Minimum() int64            { return a.op.Minimum }
 func (a *attrWrapper) DefaultValue() interface{} { return a.api.DefaultValue }
 
 type argWrapper struct {
-	op  *odpb.OpDef_ArgDef
-	api *adpb.ApiDef_Arg
+	op  *pb.OpDef_ArgDef
+	api *pb.ApiDef_Arg
 }
 
 func (a *argWrapper) Name() string        { return a.api.Name }
@@ -383,8 +379,8 @@ func (a *argWrapper) Description() string { return a.api.Description }
 func (a *argWrapper) IsListArg() bool     { return isListArg(a.op) }
 
 type tmplArgs struct {
-	Op     *odpb.OpDef
-	APIDef *adpb.ApiDef
+	Op     *pb.OpDef
+	APIDef *pb.ApiDef
 	// Op.Attr is split into two categories
 	// (1) Required: These must be specified by the client and are thus
 	//     included in the function signature.
@@ -398,7 +394,7 @@ type tmplArgs struct {
 	OutArgs         []*argWrapper
 }
 
-func newTmplArgs(op *odpb.OpDef, apidef *adpb.ApiDef) (*tmplArgs, error) {
+func newTmplArgs(op *pb.OpDef, apidef *pb.ApiDef) (*tmplArgs, error) {
 	ret := tmplArgs{Op: op, APIDef: apidef}
 
 	// Setup InArgs field
@@ -556,11 +552,11 @@ func identifier(s string) string {
 	return s
 }
 
-func isListArg(argdef *odpb.OpDef_ArgDef) bool {
+func isListArg(argdef *pb.OpDef_ArgDef) bool {
 	return argdef.TypeListAttr != "" || argdef.NumberAttr != ""
 }
 
-func isListAttr(attrdef *odpb.OpDef_AttrDef) bool {
+func isListAttr(attrdef *pb.OpDef_AttrDef) bool {
 	list, _ := parseTFType(attrdef.Type)
 	return list
 }
@@ -570,10 +566,11 @@ func isListAttr(attrdef *odpb.OpDef_AttrDef) bool {
 // This is useful when 's' corresponds to a "oneof" protocol buffer message.
 // For example, consider the protocol buffer message:
 //   oneof value { bool b = 1;  int64 i = 2; }
-// proto.CompactTextString) will print "b:true", or "i:7" etc. This function
-// strips out the leading "b:" or "i:".
-func stripLeadingColon(m proto.Message) string {
-	x := proto.CompactTextString(m)
+// String() on a Go corresponding object (using proto.CompactTextString) will
+// print "b:true", or "i:7" etc. This function strips out the leading "b:" or
+// "i:".
+func stripLeadingColon(s fmt.Stringer) string {
+	x := s.String()
 	y := strings.SplitN(x, ":", 2)
 	if len(y) < 2 {
 		return x

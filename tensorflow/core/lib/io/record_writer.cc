@@ -23,49 +23,45 @@ limitations under the License.
 namespace tensorflow {
 namespace io {
 namespace {
-bool IsZlibCompressed(const RecordWriterOptions& options) {
+bool IsZlibCompressed(RecordWriterOptions options) {
   return options.compression_type == RecordWriterOptions::ZLIB_COMPRESSION;
-}
-
-bool IsSnappyCompressed(const RecordWriterOptions& options) {
-  return options.compression_type == RecordWriterOptions::SNAPPY_COMPRESSION;
 }
 }  // namespace
 
 RecordWriterOptions RecordWriterOptions::CreateRecordWriterOptions(
     const string& compression_type) {
   RecordWriterOptions options;
+  if (compression_type == "ZLIB") {
+    options.compression_type = io::RecordWriterOptions::ZLIB_COMPRESSION;
 #if defined(IS_SLIM_BUILD)
-  if (compression_type != compression::kNone) {
     LOG(ERROR) << "Compression is not supported but compression_type is set."
                << " No compression will be used.";
-  }
 #else
-  if (compression_type == compression::kZlib) {
-    options.compression_type = io::RecordWriterOptions::ZLIB_COMPRESSION;
     options.zlib_options = io::ZlibCompressionOptions::DEFAULT();
+#endif  // IS_SLIM_BUILD
   } else if (compression_type == compression::kGzip) {
     options.compression_type = io::RecordWriterOptions::ZLIB_COMPRESSION;
+#if defined(IS_SLIM_BUILD)
+    LOG(ERROR) << "Compression is not supported but compression_type is set."
+               << " No compression will be used.";
+#else
     options.zlib_options = io::ZlibCompressionOptions::GZIP();
-  } else if (compression_type == compression::kSnappy) {
-    options.compression_type = io::RecordWriterOptions::SNAPPY_COMPRESSION;
+#endif  // IS_SLIM_BUILD
   } else if (compression_type != compression::kNone) {
     LOG(ERROR) << "Unsupported compression_type:" << compression_type
                << ". No compression will be used.";
   }
-#endif
   return options;
 }
 
 RecordWriter::RecordWriter(WritableFile* dest,
                            const RecordWriterOptions& options)
     : dest_(dest), options_(options) {
-#if defined(IS_SLIM_BUILD)
-  if (compression_type != compression::kNone) {
-    LOG(FATAL) << "Compression is unsupported on mobile platforms.";
-  }
-#else
   if (IsZlibCompressed(options)) {
+// We don't have zlib available on all embedded platforms, so fail.
+#if defined(IS_SLIM_BUILD)
+    LOG(FATAL) << "Zlib compression is unsupported on mobile platforms.";
+#else   // IS_SLIM_BUILD
     ZlibOutputBuffer* zlib_output_buffer = new ZlibOutputBuffer(
         dest, options.zlib_options.input_buffer_size,
         options.zlib_options.output_buffer_size, options.zlib_options);
@@ -75,16 +71,12 @@ RecordWriter::RecordWriter(WritableFile* dest,
                  << s.ToString();
     }
     dest_ = zlib_output_buffer;
-  } else if (IsSnappyCompressed(options)) {
-    dest_ =
-        new SnappyOutputBuffer(dest, options.snappy_options.input_buffer_size,
-                               options.snappy_options.output_buffer_size);
+#endif  // IS_SLIM_BUILD
   } else if (options.compression_type == RecordWriterOptions::NONE) {
     // Nothing to do
   } else {
     LOG(FATAL) << "Unspecified compression type :" << options.compression_type;
   }
-#endif
 }
 
 RecordWriter::~RecordWriter() {
@@ -115,35 +107,16 @@ Status RecordWriter::WriteRecord(StringPiece data) {
   return dest_->Append(StringPiece(footer, sizeof(footer)));
 }
 
-#if defined(TF_CORD_SUPPORT)
-Status RecordWriter::WriteRecord(const absl::Cord& data) {
-  if (dest_ == nullptr) {
-    return Status(::tensorflow::error::FAILED_PRECONDITION,
-                  "Writer not initialized or previously closed");
-  }
-  // Format of a single record:
-  //  uint64    length
-  //  uint32    masked crc of length
-  //  byte      data[length]
-  //  uint32    masked crc of data
-  char header[kHeaderSize];
-  char footer[kFooterSize];
-  PopulateHeader(header, data);
-  PopulateFooter(footer, data);
-  TF_RETURN_IF_ERROR(dest_->Append(StringPiece(header, sizeof(header))));
-  TF_RETURN_IF_ERROR(dest_->Append(data));
-  return dest_->Append(StringPiece(footer, sizeof(footer)));
-}
-#endif
-
 Status RecordWriter::Close() {
   if (dest_ == nullptr) return Status::OK();
-  if (IsZlibCompressed(options_) || IsSnappyCompressed(options_)) {
+#if !defined(IS_SLIM_BUILD)
+  if (IsZlibCompressed(options_)) {
     Status s = dest_->Close();
     delete dest_;
     dest_ = nullptr;
     return s;
   }
+#endif  // IS_SLIM_BUILD
   return Status::OK();
 }
 
@@ -152,7 +125,10 @@ Status RecordWriter::Flush() {
     return Status(::tensorflow::error::FAILED_PRECONDITION,
                   "Writer not initialized or previously closed");
   }
-  return dest_->Flush();
+  if (IsZlibCompressed(options_)) {
+    return dest_->Flush();
+  }
+  return Status::OK();
 }
 
 }  // namespace io

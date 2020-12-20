@@ -15,32 +15,30 @@ limitations under the License.
 
 #include "tensorflow/core/common_runtime/lower_if_op.h"
 
-#include "tensorflow/core/common_runtime/inline_function_utils.h"
+#include "tensorflow/core/common_runtime/function.h"
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/graph/graph.h"
 #include "tensorflow/core/graph/node_builder.h"
 
 namespace tensorflow {
+
 namespace {
 
 using NodeOut = NodeBuilder::NodeOut;
 
-constexpr const char* const kLowerAsMultiDeviceFunctionAttr =
-    LowerFunctionalOpsConstants::kLowerAsMultiDeviceFunctionAttr;
-
 // Convenience builder to make it easy to construct a conditional with a single
 // function call in the then and else branch. This first converts the if node
 // into switches (for inputs) and merges (for outputs) around a function call
-// per branch.
+// per branch, then inlines the function calls.
 class CondBuilder {
  public:
   enum Branch { kElseBranch = 0, kThenBranch = 1 };
 
   // Create a CondBuilder to create the lowered form of `if_op` with then and
-  // else functions `then_fn` and `else_fn` respectively in the `graph`. The
-  // functions should be available in `flib`.
-  CondBuilder(Node* if_op, const NameAttrList& then_fn,
-              const NameAttrList& else_fn, bool keep_node_fetchable,
+  // else functions named `then_fn_name` and `else_fn_name` respectively in the
+  // `graph`. The functions should be available in `flib`.
+  CondBuilder(Node* if_op, const string& then_fn_name,
+              const string& else_fn_name, const FunctionLibraryDefinition& flib,
               Graph* graph);
 
   // Constructs the basic conditional control flow using switch and merge nodes.
@@ -57,6 +55,9 @@ class CondBuilder {
   // Builds an identity node with the same outputs as If.
   Status BuildLoweredIfOutput();
 
+  // Inline call nodes for then and else.
+  Status InlineCallNodes();
+
  private:
   // Returns unique name containing the name of the If op being rewritten
   // (name_), infix and a suffix to ensure it is unique within the graph.
@@ -65,11 +66,6 @@ class CondBuilder {
   // Adds input to both the then and else nodes from src:src_output.
   Status AddInput(Node* src, int src_output);
 
-  // Finalizes the node described by `node_builder`. If `coloc_attr_` is not
-  // nullptr, adds the colocation attr to the node before finalizing it.
-  Status SetColocationAndFinalize(NodeBuilder node_builder, Graph* graph,
-                                  Node** created_node);
-
   // The merged outputs of the then and else nodes.
   std::vector<NodeOut> outputs_;
 
@@ -77,17 +73,10 @@ class CondBuilder {
   Node* control_predecessor_;
   // The original If op.
   Node* if_op_;
-  // The colocation attr on the original If op. If it exists, control flow nodes
-  // created in the lowering (except the data Switch nodes) will inherit this
-  // attribute.
-  const AttrValue* coloc_attr_;
-  // The node with the same name as the original If op:
-  //   (a) IdentityN node with same outputs if 'keep_node_fetchable_ == true'
-  //       and if the original If op had non-zero data outputs.
-  //   (b) NoOp node with control edge from 'branch_executed_node_' otherwise.
+  // The identity node with the same outputs as the original If op.
   Node* lowered_if_output_;
   // The predicate of the conditional.
-  OutputTensor pred_;
+  Node* pred_;
   // Node corresponding to pivot_f branch of predicate switch which is
   // the pivot node that dominates all nodes in the false/else branch.
   Node* pivot_f_;
@@ -96,53 +85,26 @@ class CondBuilder {
   Node* pivot_t_;
   Node* then_call_node_;
   Node* else_call_node_;
-  // Merge node that has inputs from [pivot_t, pivot_f] and control edges from
-  // [^then_call_node_, ^else_call_node_]. This node will guarantee that even
-  // when then/else branch functions do not have outputs, they still will be
-  // executed for the side effects.
-  Node* branch_executed_node_;
   Graph* graph_;
+  const FunctionLibraryDefinition& flib_;
   string name_;
-  bool keep_node_fetchable_;
 
-  NodeDebugInfo debug_info_;
   NodeBuilder then_call_builder_;
   NodeBuilder else_call_builder_;
 };
 
-CondBuilder::CondBuilder(Node* if_op, const NameAttrList& then_fn,
-                         const NameAttrList& else_fn, bool keep_node_fetchable,
-                         Graph* graph)
+CondBuilder::CondBuilder(Node* if_op, const string& then_fn_name,
+                         const string& else_fn_name,
+                         const FunctionLibraryDefinition& flib, Graph* graph)
     : if_op_(if_op),
-      coloc_attr_(if_op_->attrs().Find(kColocationAttrName)),
       graph_(graph),
+      flib_(flib),
       name_(if_op->name()),
-      keep_node_fetchable_(keep_node_fetchable),
-      debug_info_(*if_op_),
-      then_call_builder_(NewName("then"), then_fn.name(), graph->op_registry(),
-                         &debug_info_),
-      else_call_builder_(NewName("else"), else_fn.name(), graph->op_registry(),
-                         &debug_info_) {
-  TF_CHECK_OK(if_op_->input_tensor(0, &pred_));
+      then_call_builder_(NewName("then"), then_fn_name, graph->op_registry()),
+      else_call_builder_(NewName("else"), else_fn_name, graph->op_registry()) {
+  TF_CHECK_OK(if_op_->input_node(0, &pred_));
   then_call_builder_.Device(if_op_->requested_device());
-  then_call_builder_.Attr(kLowerAsMultiDeviceFunctionAttr, true);
-  for (const auto& i : then_fn.attr()) {
-    then_call_builder_.Attr(i.first, i.second);
-  }
   else_call_builder_.Device(if_op_->requested_device());
-  else_call_builder_.Attr(kLowerAsMultiDeviceFunctionAttr, true);
-  for (const auto& i : else_fn.attr()) {
-    else_call_builder_.Attr(i.first, i.second);
-  }
-}
-
-Status CondBuilder::SetColocationAndFinalize(NodeBuilder node_builder,
-                                             Graph* graph,
-                                             Node** created_node) {
-  if (coloc_attr_ != nullptr) {
-    node_builder = node_builder.Attr(kColocationAttrName, *coloc_attr_);
-  }
-  return node_builder.Finalize(graph, created_node);
 }
 
 Status CondBuilder::CreatePivotNodes() {
@@ -150,25 +112,22 @@ Status CondBuilder::CreatePivotNodes() {
   // create pivot nodes).
   Node* switch_pred;
   TF_RETURN_IF_ERROR(
-      SetColocationAndFinalize(NodeBuilder(NewName("switch_pred"), "Switch",
-                                           graph_->op_registry(), &debug_info_)
-                                   .Input(NodeOut(pred_))
-                                   .Input(NodeOut(pred_))
-                                   .Device(if_op_->requested_device()),
-                               graph_, &switch_pred));
+      NodeBuilder(NewName("switch_pred"), "Switch", graph_->op_registry())
+          .Input(NodeOut(pred_, 0))
+          .Input(NodeOut(pred_, 0))
+          .Device(if_op_->requested_device())
+          .Finalize(graph_, &switch_pred));
   control_predecessor_ = switch_pred;
   TF_RETURN_IF_ERROR(
-      SetColocationAndFinalize(NodeBuilder(NewName("pivot_f"), "Identity",
-                                           graph_->op_registry(), &debug_info_)
-                                   .Input(switch_pred, kElseBranch)
-                                   .Device(if_op_->requested_device()),
-                               graph_, &pivot_f_));
+      NodeBuilder(NewName("pivot_f"), "Identity", graph_->op_registry())
+          .Input(switch_pred, kElseBranch)
+          .Device(if_op_->requested_device())
+          .Finalize(graph_, &pivot_f_));
   TF_RETURN_IF_ERROR(
-      SetColocationAndFinalize(NodeBuilder(NewName("pivot_t"), "Identity",
-                                           graph_->op_registry(), &debug_info_)
-                                   .Input(switch_pred, kThenBranch)
-                                   .Device(if_op_->requested_device()),
-                               graph_, &pivot_t_));
+      NodeBuilder(NewName("pivot_t"), "Identity", graph_->op_registry())
+          .Input(switch_pred, kThenBranch)
+          .Device(if_op_->requested_device())
+          .Finalize(graph_, &pivot_t_));
   return Status::OK();
 }
 
@@ -178,27 +137,11 @@ string CondBuilder::NewName(const string& infix) {
 
 Status CondBuilder::AddInput(Node* src, int src_output) {
   Node* input;
-  NodeDebugInfo debug_info(*src);
-  // Colocate the Switch node with the `src` node.
-  //
-  // This is to avoid unnecessary Host<->Device copies between src and the
-  // Switch node.
-  //
-  // NOTE(rachelim): Here, we don't use `CondBuilder::SetColocationAndFinalize`,
-  // and instead ignore the existing colocation stack. This is aligned with the
-  // legacy impl in control_flow_ops.py. The legacy impl colocates this Switch
-  // with the input tensor which resets the device stack and forces the Switch
-  // to have the same device as the input node (if set) and sets the colocation
-  // _class attr. It also ignores the existing colocation stack in the context
-  // by using colocate_with(ignore_existing=True).
   TF_RETURN_IF_ERROR(
-      NodeBuilder(NewName(src->name()), "Switch", graph_->op_registry(),
-                  &debug_info)
+      NodeBuilder(NewName(src->name()), "Switch", graph_->op_registry())
           .Input(src, src_output)
-          .Input(pred_)
-          .Device(src->requested_device())
-          .Attr(kColocationAttrName,
-                {absl::StrCat(kColocationGroupPrefix, src->name())})
+          .Input(pred_, 0)
+          .Device(if_op_->requested_device())
           .Finalize(graph_, &input));
   then_call_builder_.Input(input, kThenBranch);
   else_call_builder_.Input(input, kElseBranch);
@@ -225,82 +168,72 @@ Status CondBuilder::AddInputs() {
 
 Status CondBuilder::AddOutputs() {
   // Construct the then and else nodes.
-  // NOTE(rachelim): Here, we don't use `CondBuilder::SetColocationAndFinalize`
-  // because the colocation for branch nodes is applied in python.
   TF_RETURN_IF_ERROR(then_call_builder_.Finalize(graph_, &then_call_node_));
   graph_->AddControlEdge(pivot_t_, then_call_node_);
   TF_RETURN_IF_ERROR(else_call_builder_.Finalize(graph_, &else_call_node_));
   graph_->AddControlEdge(pivot_f_, else_call_node_);
 
-  // Add Merge node for each data output of the If node.
+  // Merge the outputs from the two branches.
   std::vector<Node*> merges(then_call_node_->num_outputs());
   outputs_.resize(merges.size());
   for (int i = 0; i < then_call_node_->num_outputs(); ++i) {
-    TF_RETURN_IF_ERROR(SetColocationAndFinalize(
-        NodeBuilder(NewName("output"), "Merge", graph_->op_registry(),
-                    &debug_info_)
+    TF_RETURN_IF_ERROR(
+        NodeBuilder(graph_->NewName("merge"), "Merge", graph_->op_registry())
             .Input({NodeOut(then_call_node_, i), NodeOut(else_call_node_, i)})
-            .Device(if_op_->requested_device()),
-        graph_, &merges[i]));
+            .Device(if_op_->requested_device())
+            .Finalize(graph_, &merges[i]));
     outputs_[i] = NodeOut(merges[i], 0);
   }
-
-  // Add a Merge node that will be used as a control dependency source for the
-  // lowered output node. This Merge node will guarantee that lowered else/then
-  // function calls will be executed even if they do not have data outputs.
-  //
-  // Furthermore it will guarantee that all function side effects will be
-  // executed, if the function will be inlined into the graph. Having data
-  // outputs is not enough, because they might become unused after inlining.
-  //
-  // We will use this node to rewrite outgoing control edges from lowered 'If'
-  // node. All data edges will read tensors directly from Merge nodes.
-  TF_RETURN_IF_ERROR(SetColocationAndFinalize(
-      NodeBuilder(NewName("branch_executed"), "Merge", graph_->op_registry(),
-                  &debug_info_)
-          .Input({pivot_t_, pivot_f_})
-          .ControlInputs({then_call_node_, else_call_node_})
-          .Device(if_op_->requested_device()),
-      graph_, &branch_executed_node_));
 
   TF_RETURN_IF_ERROR(BuildLoweredIfOutput());
 
   // Add outputs.
   for (const Edge* e : if_op_->out_edges()) {
     if (e->IsControlEdge()) {
-      graph_->AddControlEdge(branch_executed_node_, e->dst());
+      graph_->AddControlEdge(lowered_if_output_, e->dst());
     } else {
       // Feed the outputs directly from the merge nodes so that downstream ops
       // can start before all the outputs have been computed.
       graph_->AddEdge(merges[e->src_output()], 0, e->dst(), e->dst_input());
     }
   }
+  return Status::OK();
+}
 
+Status InlineCallInGraph(Node* n, const FunctionLibraryDefinition& flib,
+                         Graph* g) {
+  const FunctionDef* fdef = flib.Find(n->type_string());
+  CHECK(fdef != nullptr);
+  FunctionBody* fbody;
+  TF_RETURN_IF_ERROR(
+      FunctionDefToBodyHelper(*fdef, n->attrs(), &flib,
+                              [&flib](const string& op, const OpDef** sig) {
+                                return flib.LookUpOpDef(op, sig);
+                              },
+                              &fbody));
+  // TODO(jpienaar): Improve this interface to make the need to delete it
+  // explicit.
+  InlineFunctionBody(g->flib_def(), g, n, fbody, false);
+  delete fbody;
   return Status::OK();
 }
 
 Status CondBuilder::BuildLoweredIfOutput() {
-  // If outputs are empty, it means that we might have only output control
-  // edges (already connected to the `branch_executed_node`). Furthermore it's
-  // illegal to have an IdentityN with empty inputs.
-  //
-  // We still must keep lowered If node as a valid source of control edges,
-  // because it might be a part of function control output set.
-  NodeBuilder builder = keep_node_fetchable_ && !outputs_.empty()
-                            ? NodeBuilder(name_, "IdentityN").Input(outputs_)
-                            : NodeBuilder(name_, "NoOp");
+  // Build the identity node output.
+  NodeBuilder ib(name_, "IdentityN");
+  ib.Input(outputs_).Device(if_op_->requested_device());
+  return ib.Finalize(graph_, &lowered_if_output_);
+}
 
-  return builder.Device(if_op_->requested_device())
-      .ControlInput(branch_executed_node_)
-      .Finalize(graph_, &lowered_if_output_);
+Status CondBuilder::InlineCallNodes() {
+  TF_RETURN_IF_ERROR(InlineCallInGraph(then_call_node_, flib_, graph_));
+  TF_RETURN_IF_ERROR(InlineCallInGraph(else_call_node_, flib_, graph_));
+  return Status::OK();
 }
 
 }  // namespace
 
-Status RewriteIfNode(Node* n, Graph* g, bool keep_node_fetchable) {
-  VLOG(2) << "Lower If node (keep_node_fetchable=" << keep_node_fetchable
-          << "): " << SummarizeNode(*n);
-
+Status RewriteIfNode(Node* n, Graph* g, const FunctionLibraryDefinition& flib) {
   const AttrValue* then_attr = n->attrs().Find("then_branch");
   if (then_attr == nullptr) {
     return errors::InvalidArgument("Then branch function missing");
@@ -310,11 +243,12 @@ Status RewriteIfNode(Node* n, Graph* g, bool keep_node_fetchable) {
     return errors::InvalidArgument("Else branch function missing");
   }
 
-  CondBuilder cb(n, then_attr->func(), else_attr->func(), keep_node_fetchable,
+  CondBuilder cb(n, then_attr->func().name(), else_attr->func().name(), flib,
                  g);
   TF_RETURN_IF_ERROR(cb.CreatePivotNodes());
   TF_RETURN_IF_ERROR(cb.AddInputs());
   TF_RETURN_IF_ERROR(cb.AddOutputs());
+  TF_RETURN_IF_ERROR(cb.InlineCallNodes());
   g->RemoveNode(n);
 
   return Status::OK();

@@ -27,7 +27,6 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/strings/strip.h"
 #include "tensorflow/compiler/xla/literal.h"
-#include "tensorflow/compiler/xla/service/hlo_parser.h"
 #include "tensorflow/compiler/xla/shape_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/types.h"
@@ -67,7 +66,7 @@ StatusOr<Literal> TextLiteralReader::ReadAllLines() {
   }
 
   absl::StripAsciiWhitespace(&shape_string);
-  TF_ASSIGN_OR_RETURN(Shape shape, ParseShape(shape_string));
+  TF_ASSIGN_OR_RETURN(Shape shape, ShapeUtil::ParseShapeString(shape_string));
   if (shape.element_type() != F32) {
     return Unimplemented(
         "unsupported element type for text literal reading: %s",

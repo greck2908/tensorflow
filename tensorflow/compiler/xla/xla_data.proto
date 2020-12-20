@@ -16,14 +16,11 @@ limitations under the License.
 syntax = "proto3";
 
 package xla;
-
 option cc_enable_arenas = true;
 
 // Primitive types are the individual values that can be held in rectangular
 // multidimensional arrays. A description of the rectangular multidimensional
 // array dimensions / primitive type is given by Shape, below.
-//
-// LINT.IfChange
 enum PrimitiveType {
   // Invalid primitive type to serve as default.
   PRIMITIVE_TYPE_INVALID = 0;
@@ -58,8 +55,7 @@ enum PrimitiveType {
   F64 = 12;
 
   // Complex values of fixed width.
-  C64 = 15;   // Paired F32 (real, imag), as in std::complex<float>.
-  C128 = 18;  // Paired F64 (real, imag), as in std::complex<double>.
+  C64 = 15;  // Paired F32 (real, imag), as in std::complex<float>.
 
   // A tuple is a polymorphic sequence; e.g. a shape that holds different
   // sub-shapes. They are used for things like returning multiple values from a
@@ -73,21 +69,36 @@ enum PrimitiveType {
   // An opaque type used for passing context-specific data to a custom
   // operation. Shapes of this primitive type will have empty dimensions and
   // tuple_shapes fields.
-  //
-  // (OPAQUE would be a better name for this identifier, but that conflicts with
-  // a macro defined in windows.h.)
-  OPAQUE_TYPE = 14;
+  OPAQUE = 14;
 
   // A token type threaded between side-effecting operations. Shapes of this
   // primitive type will have empty dimensions and tuple_shapes fields.
   TOKEN = 17;
 
-  // Next = 19
+  // Next = 18
 }
-// LINT.ThenChange(
-//   https://www.tensorflow.org/code/tensorflow/compiler/xla/shape_util.cc,
-//   https://www.tensorflow.org/code/tensorflow/compiler/xla/tools/driver.cc
-// )
+
+// Describes the value held inside padding elements.
+enum PaddingValue {
+  INVALID_PAD = 0;
+
+  // Zero padding must be 0-values that correspond to the shape's element type.
+  ZERO_PAD = 1;
+
+  // One padding must be 1-values that correspond to the shape's element type.
+  ONE_PAD = 2;
+
+  // "Lowest" padding must be the lowest values in the shape's element type,
+  // used as padding for operations like max-accumulation.
+  LOWEST_PAD = 3;
+
+  // "Highest" padding must be the largest values in the shape's element type,
+  // used as padding for operations like min-accumulation.
+  HIGHEST_PAD = 4;
+
+  // Unknown padding could be anything; e.g. floating NaNs!
+  UNKNOWN_PAD = 5;
+}
 
 // Describes the padding configuration for Pad operation. The padding amount on
 // both edges as well as between the elements are specified for each dimension.
@@ -111,28 +122,18 @@ message PaddingConfig {
 
 // A format specifies the method used by a layout to store an array in memory.
 enum Format {
-  // TODO(b/120869032): Rename this to FORMAT_NONE or something else which
-  // better corresponds to its meaning.
   INVALID_FORMAT = 0;
-  // The default layout, with exactly one storage location per element.
+  // The default layout, with exactly one storage location per element (ignoring
+  // padding).
   DENSE = 1;
-  reserved 2;
-  reserved "SPARSE";
-}
-
-// Describes a tile used in tiling-based layout. Refer to
-// g3doc/third_party/tensorflow/compiler/xla/g3doc/tiled_layout.md for
-// details about tiling-based layout.
-message TileProto {
-  // Number of elements in each dimension of the tile. It's ordered from the
-  // most major dimension of the tile to the most minor dimension of the tile.
-  // The dimensions correspond to a suffix of the dimensions of the shape being
-  // tiled.
-  repeated int64 dimensions = 1;
+  // A sparsely encoded layout, providing only the index/value pairs of non-zero
+  // elements.
+  SPARSE = 2;
 }
 
 // A layout describes how the array is placed in (1D) memory space.  This
-// includes the minor-to-major ordering of dimensions within a shape.
+// includes the minor-to-major ordering of dimensions within a shape, as well as
+// any padding present in those dimensions.
 //
 // Clients must specify the layouts of input Literals to the
 // computation. Layouts specified in interior operations which take Shapes (for
@@ -141,7 +142,7 @@ message TileProto {
 // See the XLA documentation for more information on shapes and layouts.
 //
 // LINT.IfChange
-message LayoutProto {
+message Layout {
   // The method used to store the data in memory. The format determines which of
   // the other fields are used by the layout.
   Format format = 4;
@@ -150,32 +151,21 @@ message LayoutProto {
   // (slowest varying index). This field is required.
   repeated int64 minor_to_major = 1;
 
-  reserved 2;
-  reserved "padded_dimensions";
+  // The width to which the layout of each dimension is padded up to. If
+  // present, the size of the padded_dimensions must equal the rank of the
+  // shape. The padding appears at the end of a dimension, not at the
+  // beginning. This kind of padding, unlike padding in e.g. convolution, is not
+  // part of the shape. This field must be unset unless the format is DENSE.
+  repeated int64 padded_dimensions = 2;
 
-  reserved 3;
-  reserved "padding_value";
+  // Describes the values in the padding specified by padded_dimensions. This
+  // field must be unset unless the format is DENSE.
+  PaddingValue padding_value = 3;
 
-  reserved 5;
-  reserved "max_sparse_elements";
-
-  // A sequence of tiles, starting from the tile that's applied first to the
-  // Shape.
-  //
-  // TODO(b/119839262): implement tiling in each backend or add Unimplemented
-  // error.
-  repeated TileProto tiles = 6;
-
-  // Bit size of each element. If the size is bigger than what the element
-  // type requires, the value is stored in the least significant
-  // bits and the additional most significant bits are filled with 0's.
-  //
-  // TODO(b/119839262): implement in each backend or add Unimplemented error.
-  int64 element_size_in_bits = 7;
-
-  // Memory space where this array resides. The integer field is interpreted in
-  // a backend-specific manner.
-  int64 memory_space = 8;
+  // The maximum number of elements that can be stored for SPARSE formats.  This
+  // can be used to determine the maximum size in bytes of arrays stored in
+  // memory.  This field must be unset unless the format is SPARSE.
+  int64 max_sparse_elements = 5;
 
   // Important: if any field is added, be sure to modify ShapeUtil::Equal() and
   // LayoutUtil::Hash appropriately to account for the new field.
@@ -193,34 +183,25 @@ message LayoutProto {
 // See the XLA documentation for more information on shapes and layouts.
 //
 // LINT.IfChange
-message ShapeProto {
+message Shape {
   reserved 1;
   reserved "rank";
 
   // The element type for this shape.
   PrimitiveType element_type = 2;
 
-  // The size (number of elements) for each dimension, or an upper bound on the
-  // size if the dimension is dynamic.  In XLA, dimensions are numbered from 0
-  // to N-1 for an N-dimensional array. The first element of 'dimensions' is the
-  // size of dimension 0, the second element is the size of dimension 1, and so
-  // forth.  Empty list indicates a scalar.
-  //
-  // If the respective element in 'is_dimension_dynamic' is true then the value
-  // in this field represents an upper bound on the size of the dimension.
+  // The size (number of elements) for each dimension.
+  // In XLA, dimensions are numbered from 0 to N-1 for an
+  // N-dimensional array. The first element of 'dimensions' is the size of
+  // dimension 0, the second element is the size of dimension 1, and so forth.
+  // Empty list indicates a scalar.
   repeated int64 dimensions = 3;
 
-  // For tuples only, the shapes of constituent shapes in the tuple sequence.
-  repeated ShapeProto tuple_shapes = 4;
+  // For tuples only, the shapes of constitutent shapes in the tuple sequence.
+  repeated Shape tuple_shapes = 4;
 
   // The layout used to back this shape.
-  LayoutProto layout = 5;
-
-  // For arrays, this indicates whether or not each dimension is
-  // dynamically-sized. The number of elements in this repeated field should be
-  // zero (indicating that no dimensions are dynamic) or equal to the number of
-  // elements in the 'dimensions' field.
-  repeated bool is_dynamic_dimension = 6;
+  Layout layout = 5;
 
   // Important: if any field is added, be sure to modify ShapeUtil::Equal(),
   // ShapeUtil::Compatible() and ShapeUtil::Hash() appropriately to account for
@@ -231,9 +212,9 @@ message ShapeProto {
 
 // Shape of the parameters and output of a computation (like a traditional
 // function signature).
-message ProgramShapeProto {
-  repeated ShapeProto parameters = 1;
-  ShapeProto result = 2;
+message ProgramShape {
+  repeated Shape parameters = 1;
+  Shape result = 2;
   repeated string parameter_names = 3;
 }
 
@@ -244,14 +225,6 @@ message ComputationStats {
 
   // The number of transcendental operations (e.g., exp) in the computation.
   double transcendental_count = 2;
-}
-
-// The type optimization profiles in use.
-enum ProfileType {
-  INVALID = 0;
-  WINDOW = 1;
-  FLAG = 2;
-  INTEGER = 3;
 }
 
 // Symbolization metadata for HLO Instructions.
@@ -271,23 +244,12 @@ message OpMetadata {
   //
   // This name is often unique within a computation. Note: some frameworks
   // add auto-generated names if the user does not provide one.
-  //
-  // A dummy name may be assigned if op_name is empty in order to keep track of
-  // where op_name first became empty. Dummy names begin with "DUMMY_" and may
-  // include the current HloPassMetadata.pass_id.
   string op_name = 2;
   // Indicate a file and line that this op is associated to in a user's program.
   //
   // e.g. it could be the file and line of user code that generated the op.
   string source_file = 3;
   int32 source_line = 4;
-
-  repeated ProfileType profile_type = 5;
-
-  // HloPassMetadata.pass_id of the pass that created this HLO instruction
-  // object. Should never be copied between HLO instructions. Zero if unset and
-  // -1 if the instruction was created before HLO passes began.
-  int64 creation_pass_id = 6;
 }
 
 // Profile data from the execution of a computation.
@@ -316,10 +278,6 @@ message ExecutionProfile {
 
   // The size of the binary code in the executable.
   int64 executable_size_in_bytes = 6;
-
-  // Whether this profile was drawn from a cache of profiles instead of from
-  // execution on the hardware.
-  bool profile_cache_hit = 7;
 }
 
 // Handle given to a user that represents an execution that the user launched
@@ -391,7 +349,7 @@ message DeviceAssignmentProto {
 // Transfers to/from the client are encoded in literal form, and the structure
 // of the repeated fields is implied by the shape.
 message LiteralProto {
-  ShapeProto shape = 1;
+  Shape shape = 1;
   repeated bool preds = 2;
   bytes s8s = 15;
   bytes u8s = 3;
@@ -401,16 +359,13 @@ message LiteralProto {
   repeated uint64 u64s = 7;
   repeated float f32s = 8;
   repeated double f64s = 9;
-  repeated float c64s = 12;    // Stored as interleaved real, imag floats.
-  repeated double c128s = 18;  // Stored as interleaved real, imag doubles.
+  repeated float c64s = 12;  // Stored as interleaved real, imag floats.
   repeated LiteralProto tuple_literals = 10;
-  // The F16s, BF16s, U16s and S16s are encoded in little endian byte order
+  // The F16s and BF16s are encoded in little endian byte order
   bytes f16s = 11;
   bytes bf16s = 13;
-  bytes u16s = 16;
-  bytes s16s = 17;
   repeated int64 sparse_indices = 14;
-  // Next = 19
+  // Next = 16
 }
 
 message WindowDimension {
@@ -544,13 +499,7 @@ message ConvolutionDimensionNumbers {
   repeated int64 output_spatial_dimensions = 12;
 
   // Next = 13
-}
-
-enum PaddingType {
-  PADDING_INVALID = 0;
-  PADDING_VALID = 1;  // Only valid portion of the base are covered.
-  PADDING_SAME = 2;  // Extra is added to produce same output size as the input.
-}
+};
 
 enum FftType {
   FFT = 0;    // Forward FFT; complex in, complex out.
@@ -569,7 +518,7 @@ message DotDimensionNumbers {
   repeated int64 lhs_batch_dimensions = 3;
   // The dimension numbers that represent the 'rhs' batch dimensions.
   repeated int64 rhs_batch_dimensions = 4;
-}
+};
 
 enum RandomDistribution {
   RNG_INVALID = 0;
@@ -585,45 +534,6 @@ enum RandomDistribution {
   // Next: 4
 }
 
-enum RandomAlgorithm {
-  RNG_DEFAULT = 0;  // Backend dependent default algorithm.
-  RNG_THREE_FRY = 1;
-  RNG_PHILOX = 2;
-  // Next: 2
-}
-
-message TriangularSolveOptions {
-  // If true, solves ax = b. If false, solves xa = b.
-  bool left_side = 1;
-
-  // If true, 'a' is lower triangular. If false, 'a' is upper triangular.
-  bool lower = 2;
-
-  // If true, the diagonal elements of 'a' are assumed to be 1 and not accessed.
-  bool unit_diagonal = 3;
-
-  // Should we transpose or use the adjoint of 'a'?
-  enum Transpose {
-    TRANSPOSE_INVALID = 0;
-    NO_TRANSPOSE = 1;  // Don't transpose 'a'.
-    TRANSPOSE = 2;     // Transpose 'a'.
-    ADJOINT = 3;       // Complex conjugate and transpose 'a'.
-  }
-  Transpose transpose_a = 4;
-}
-
-message CholeskyOptions {
-  // If true, uses the lower triangle of `a`. If false, uses the upper triangle
-  // of `a`.
-  bool lower = 1;
-}
-
-// Generic map of attributes used to pass hints / configuration options from
-// the Python frontend to the XLA backend.
-message FrontendAttributes {
-  map<string, string> map = 1;
-}
-
 message OpSharding {
   enum Type {
     // This sharding is replicated across all devices (implies maximal,
@@ -635,13 +545,10 @@ message OpSharding {
     TUPLE = 2;
     // None of the above; tile_shape and tile_assignment are both used.
     OTHER = 3;
-    // This op is manually sharded: the shapes are already partitioned and the
-    // partitioner should not change this op.
-    MANUAL = 4;
   }
   Type type = 1;
   // The shape of the sharded tile.
-  ShapeProto tile_shape = 2;
+  Shape tile_shape = 2;
   // The shape of the tile assignment tensor - this must be the same rank as
   // tile_shape and the product of its dimensions must equal
   // tile_assignment_devices.size().
@@ -656,18 +563,13 @@ message OpSharding {
   // applied, this is inferred from the instruction this sharding gets attached
   // to.
   repeated OpSharding tuple_shardings = 5;
-
-  // Only used for OTHER type. If true, data is sharded according to other
-  // dimensions of tile_assignment(), but replicated across devices along the
-  // last dimension. (Experimental)
-  bool replicate_on_last_tile_dim = 6;
 }
 
 // Describes the replica groups in a cross replica op (e.g., all-reduce and
 // all-to-all).
 message ReplicaGroup {
   // The ids of the replicas that belongs to the same group. The ordering of the
-  // ids matters in some ops (e.g., all-to-all).
+  // ids matters in some op (e.g., all-to-all).
   repeated int64 replica_ids = 1;
 }
 
@@ -690,41 +592,4 @@ message PrecisionConfig {
   repeated Precision operand_precision = 1;
 
   // Next: 2
-}
-
-// Describes whether all data-parallelism replicas will receive the same
-// parameter data at each buffer.
-message ParameterReplication {
-  // A list of boolean values for the flattened leaf buffers. Each value
-  // indicates whether the corresponding leaf buffer is replicated.
-  //
-  // If this field is empty, it means no buffer is replicated. Otherwise, the
-  // number of elements in this field must match the number of leaf buffers in
-  // the HLO instruction's shape.
-  repeated bool replicated_at_leaf_buffers = 1;
-}
-
-// A backend-config for kWhile loops that stores the loop's trip count, if it is
-// known.
-//
-// This is useful for backends that can implement a `for i in 0..N` loop more
-// efficiently than a `while` loop.  For example, on GPUs, we can implement a
-// `for i in 0..N` loop by enqueueing the kernels for the loop body N times,
-// whereas implementing a `while` loop requires a host-device sync on each
-// iteration.
-message WhileLoopBackendConfig {
-  message KnownTripCount {
-    int64 n = 1;
-  }
-  // This indirection lets us distinguish between known-trip-count == 0 and
-  // unknown-trip-count.
-  KnownTripCount known_trip_count = 1;
-}
-
-// Specifies a pair of output/operand buffers for kCustomCall that alias each
-// other.
-message CustomCallOutputOperandAliasing {
-  repeated int64 output_shape_index = 1;
-  int64 operand_index = 2;
-  repeated int64 operand_shape_index = 3;
 }

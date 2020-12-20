@@ -18,13 +18,13 @@ limitations under the License.
 
 #include <unordered_map>
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/types/span.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Value.h"
 #include "tensorflow/compiler/xla/map_util.h"
 #include "tensorflow/compiler/xla/service/buffer_assignment.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
+#include "tensorflow/compiler/xla/service/llvm_ir/alias_analysis.h"
 #include "tensorflow/compiler/xla/service/llvm_ir/ir_array.h"
 
 namespace xla {
@@ -41,7 +41,8 @@ class HloToIrBindings {
       : buffer_assignment_(buffer_assignment),
         is_nested_(is_nested),
         b_(b),
-        module_(llvm_module) {}
+        module_(llvm_module),
+        alias_analysis_(module, *buffer_assignment_, &b_->getContext()) {}
 
   void EmitBasePointersForHlos(
       absl::Span<const HloInstruction* const> io_hlos,
@@ -60,7 +61,7 @@ class HloToIrBindings {
 
   // Returns whether `hlo` is bound to an LLVM IR value.
   bool BoundToIrValue(const HloInstruction& hlo) const {
-    return base_ptrs_.contains(&hlo);
+    return base_ptrs_.count(&hlo);
   }
 
   llvm::Value* GetTempBufferBase() const { return temp_buffer_base_; }
@@ -109,16 +110,13 @@ class HloToIrBindings {
   // For an instruction that generates multiple outputs, the root will be a
   // tuple shape. The IrArray for each element output is stored in the subnode
   // in the ShapeTree.
-  absl::flat_hash_map<const HloInstruction*, ShapeTree<llvm::Value*>>
-      base_ptrs_;
+  std::unordered_map<const HloInstruction*, ShapeTree<llvm::Value*>> base_ptrs_;
 
   // The address of the memory block that contains all temporary buffers.
   llvm::Value* temp_buffer_base_ = nullptr;
-};
 
-// Converts `ir_value` with type i8* to a typed LLVM Value* based on `shape`.
-llvm::Value* CastToTypedValue(const Shape& shape, llvm::Value* ir_value,
-                              llvm::IRBuilder<>* b);
+  llvm_ir::AliasAnalysis alias_analysis_;
+};
 
 }  // namespace gpu
 }  // namespace xla

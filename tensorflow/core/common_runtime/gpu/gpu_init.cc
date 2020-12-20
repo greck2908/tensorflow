@@ -29,27 +29,17 @@ limitations under the License.
 namespace tensorflow {
 
 Status ValidateGPUMachineManager() {
-  return se::MultiPlatformManager::PlatformWithName(GpuPlatformName()).status();
+  return se::MultiPlatformManager::PlatformWithName("CUDA").status();
 }
 
 se::Platform* GPUMachineManager() {
-  auto result = se::MultiPlatformManager::PlatformWithName(GpuPlatformName());
+  auto result = se::MultiPlatformManager::PlatformWithName("CUDA");
   if (!result.ok()) {
-    LOG(FATAL) << "Could not find Platform with name " << GpuPlatformName();
+    LOG(FATAL) << "Could not find Platform with name CUDA";
     return nullptr;
   }
 
   return result.ValueOrDie();
-}
-
-string GpuPlatformName() {
-#if TENSORFLOW_USE_ROCM
-  return "ROCM";
-#else
-  // This function will return "CUDA" even when building TF without GPU support
-  // This is done to preserve existing functionality
-  return "CUDA";
-#endif
 }
 
 }  // namespace tensorflow

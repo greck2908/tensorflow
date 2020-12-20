@@ -14,7 +14,7 @@ SQLITE_COPTS = [
     "@org_tensorflow//tensorflow:windows": [
         "-DSQLITE_MAX_TRIGGER_DEPTH=100",
     ],
-    "@org_tensorflow//tensorflow:macos": [
+    "@org_tensorflow//tensorflow:darwin": [
         "-Os",
         "-DHAVE_GMTIME_R=1",
         "-DHAVE_LOCALTIME_R=1",

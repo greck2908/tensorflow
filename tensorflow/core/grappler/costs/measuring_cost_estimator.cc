@@ -51,12 +51,8 @@ Status MeasuringCostEstimator::Initialize(const GrapplerItem& item) {
 }
 
 Status MeasuringCostEstimator::PredictCosts(const GraphDef& optimized_graph,
-                                            RunMetadata* run_metadata,
+                                            CostGraphDef* cost_graph,
                                             Costs* costs) const {
-  CostGraphDef* cost_graph = nullptr;
-  if (run_metadata) {
-    cost_graph = run_metadata->mutable_cost_graph();
-  }
   const bool running_simulation = (cluster_->type() == "virtual");
 
   std::vector<double> times(measurement_steps_);

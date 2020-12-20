@@ -48,7 +48,7 @@ class InfeedTest : public ClientLibraryTestBase {
     ASSERT_IS_OK(client_->TransferToInfeed(literal));
     XlaBuilder builder(TestName());
     Infeed(&builder, literal.shape());
-    if (literal.shape().IsTuple()) {
+    if (ShapeUtil::IsTuple(literal.shape())) {
       // TODO(b/30609564): Use ComputeAndCompareLiteral instead.
       ComputeAndCompareTuple(&builder, literal, {});
     } else {

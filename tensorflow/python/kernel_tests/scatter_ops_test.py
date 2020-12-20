@@ -22,7 +22,6 @@ import numpy as np
 
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variables
 from tensorflow.python.platform import test
@@ -179,11 +178,10 @@ class ScatterTest(test.TestCase):
             np_scatter = _TF_OPS_TO_NUMPY[tf_scatter]
           np_scatter(new, indices, updates)
           # Scatter via tensorflow
-          ref = variables.Variable(old)
-          self.evaluate(ref.initializer)
-          self.evaluate(tf_scatter(ref, indices, updates))
-          self.assertAllCloseAccordingToType(
-              self.evaluate(ref), new, half_rtol=5e-3, half_atol=5e-3)
+          ref = variables.VariableV1(old)
+          ref.initializer.run()
+          tf_scatter(ref, indices, updates).eval()
+          self.assertAllClose(ref.eval(), new)
 
   def _VariableRankTests(self,
                          tf_scatter,
@@ -192,8 +190,6 @@ class ScatterTest(test.TestCase):
     vtypes = [np.float32, np.float64]
     if tf_scatter != state_ops.scatter_div:
       vtypes.append(np.int32)
-      # float16 is numerically unstable for div
-      vtypes.append(np.float16)
 
     for vtype in vtypes:
       for itype in (np.int32, np.int64):
@@ -280,17 +276,17 @@ class ScatterTest(test.TestCase):
 
   def testBooleanScatterUpdate(self):
     if not test.is_gpu_available():
-      with self.session(use_gpu=False):
+      with self.session(use_gpu=False) as session:
         var = variables.Variable([True, False])
         update0 = state_ops.scatter_update(var, 1, True)
         update1 = state_ops.scatter_update(
             var, constant_op.constant(
                 0, dtype=dtypes.int64), False)
-        self.evaluate(var.initializer)
+        var.initializer.run()
 
-        self.evaluate([update0, update1])
+        session.run([update0, update1])
 
-        self.assertAllEqual([False, True], self.evaluate(var))
+        self.assertAllEqual([False, True], var.eval())
 
   def testScatterOutOfRangeCpu(self):
     for op, _ in _TF_OPS_TO_NUMPY.items():
@@ -298,22 +294,22 @@ class ScatterTest(test.TestCase):
       updates = np.array([-3, -4, -5]).astype(np.float32)
       if not test.is_gpu_available():
         with self.session(use_gpu=False):
-          ref = variables.Variable(params)
-          self.evaluate(ref.initializer)
+          ref = variables.VariableV1(params)
+          ref.initializer.run()
 
           # Indices all in range, no problem.
           indices = np.array([2, 0, 5])
-          self.evaluate(op(ref, indices, updates))
+          op(ref, indices, updates).eval()
 
           # Test some out of range errors.
           indices = np.array([-1, 0, 5])
           with self.assertRaisesOpError(
               r'indices\[0\] = -1 is not in \[0, 6\)'):
-            self.evaluate(op(ref, indices, updates))
+            op(ref, indices, updates).eval()
 
           indices = np.array([2, 0, 6])
           with self.assertRaisesOpError(r'indices\[2\] = 6 is not in \[0, 6\)'):
-            self.evaluate(op(ref, indices, updates))
+            op(ref, indices, updates).eval()
 
   # TODO(fpmc): Re-enable this test when gpu_pip test actually runs on a GPU.
   def _disabledTestScatterOutOfRangeGpu(self):
@@ -324,19 +320,19 @@ class ScatterTest(test.TestCase):
       updates = np.array([-3, -4, -5]).astype(np.float32)
       # With GPU, the code ignores indices that are out of range.
       # We don't test the implementation; just test there's no failures.
-      with test_util.force_gpu():
+      with self.cached_session(force_gpu=True):
         ref = variables.Variable(params)
-        self.evaluate(ref.initializer)
+        ref.initializer.run()
 
         # Indices all in range, no problem.
         indices = np.array([2, 0, 5])
-        self.evaluate(op(ref, indices, updates))
+        op(ref, indices, updates).eval()
 
-        # Indices out of range should not fail.
+        # Indicies out of range should not fail.
         indices = np.array([-1, 0, 5])
-        self.evaluate(op(ref, indices, updates))
+        op(ref, indices, updates).eval()
         indices = np.array([2, 0, 6])
-        self.evaluate(op(ref, indices, updates))
+        op(ref, indices, updates).eval()
 
 
 if __name__ == '__main__':

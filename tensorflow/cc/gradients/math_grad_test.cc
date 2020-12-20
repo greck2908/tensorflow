@@ -89,9 +89,7 @@ class CWiseUnaryGradTest : public ::testing::Test {
     COMPLEX,
     ANGLE,
     LGAMMA,
-    ERF,
-    ERFINV,
-    NDTRI
+    ERF
   };
 
   template <typename X_T, typename Y_T>
@@ -201,12 +199,6 @@ class CWiseUnaryGradTest : public ::testing::Test {
         break;
       case ERF:
         y = Erf(scope_, x);
-        break;
-      case ERFINV:
-        y = Erfinv(scope_, x);
-        break;
-      case NDTRI:
-        y = Ndtri(scope_, x);
         break;
     }
 
@@ -573,20 +565,6 @@ TEST_F(CWiseUnaryGradTest, Erf_Complex) {
   if (false) {
     TestCWiseGrad<complex64, complex64>(ERF, x_fn);
   }
-}
-
-TEST_F(CWiseUnaryGradTest, Ndtri) {
-  auto x_fn = [this](const int i) {
-    return RV({0.1, 0.2, 0.3, 0.5, 0.7, 0.9});
-  };
-  TestCWiseGrad<float, float>(NDTRI, x_fn);
-}
-
-TEST_F(CWiseUnaryGradTest, Erfinv) {
-  auto x_fn = [this](const int i) {
-    return RV({-0.9, -0.3, -0.1, 0.2, 0.6, 0.8});
-  };
-  TestCWiseGrad<float, float>(ERFINV, x_fn);
 }
 
 class MathGradTest : public ::testing::Test {

@@ -35,9 +35,10 @@ class XlaConvOp : public XlaOpKernel {
     string precision_config_attr;
     OP_REQUIRES_OK(
         context, context->GetAttr("precision_config", &precision_config_attr));
-    OP_REQUIRES(context,
-                precision_config_.ParsePartialFromString(precision_config_attr),
-                errors::InvalidArgument("Error parsing precision config."));
+    OP_REQUIRES(
+        context,
+        precision_config_.ParsePartialFromString(precision_config_attr),
+        errors::InvalidArgument("Error parsing convolution dimension numbers"));
   }
 
   void Compile(XlaOpKernelContext* context) override {
@@ -77,7 +78,7 @@ class XlaConvOp : public XlaOpKernel {
     xla::XlaOp output = xla::ConvGeneralDilated(
         context->Input(0), context->Input(1), window_strides, padding,
         lhs_dilation, rhs_dilation, dnums_, feature_group_count,
-        /*batch_group_count=*/1, &precision_config_);
+        &precision_config_);
     context->SetOutput(0, output);
   }
 

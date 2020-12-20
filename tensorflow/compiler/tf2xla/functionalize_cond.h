@@ -17,8 +17,6 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_TF2XLA_FUNCTIONALIZE_COND_H_
 
 #include <deque>
-
-#include "tensorflow/compiler/tf2xla/functionalize_control_flow_util.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/graph/graph.h"
@@ -28,17 +26,8 @@ namespace tensorflow {
 // Functionalize all the switch-merge nodes of a loop-free graph into If
 // nodes. That is, attempt to transform every remaining switch and merge nodes
 // in the graph into If nodes.
-//
-// If `node_filter` is defined, then only conditions for whose nodes
-// `node_filter` returns true are functionalized.
-//
-// Preconditions:
-// a) Same as for `FunctionalizeControlFlow` (see comment there).
-// b) While loops must have been functionalized before according to
-//    `node_filter` (e.g., by calling `FunctionalizeWhileLoop` with the same
-//    filter before calling this function).
-Status FunctionalizeCond(Graph* graph, FunctionLibraryDefinition* library,
-                         const NodeFilter& node_filter = {});
+// Precondition: All while loops have been removed from graph.
+Status FunctionalizeCond(Graph* graph, FunctionLibraryDefinition* library);
 
 // Internal functions/classes exposed for testing purposes.
 namespace functionalize_cond {
@@ -52,33 +41,6 @@ enum class BranchType {
   kThenBranch = 1,
   kBoth = 2,
   kNeither = 3,
-};
-
-// When we keep track of which switch/merge node's feed into a node, we record
-// 1) predicate for non-dead switch node,
-// 2) the switch node itself for dead switch node,
-// 3) the merge node itself for merge node.
-// Case 1) is an optimization. With this optimization, if there are nodes from
-// different switch nodes but those switch nodes have the same predicate, the
-// nodes will still have same AncestorState, and they will be clustered into a
-// single "If".
-struct AncestorNode {
-  enum class AncestorNodeType {
-    kPred = 0,
-    kSwitch = 1,
-    kMerge = 2,
-  };
-
-  OutputTensor output_tensor;
-  AncestorNodeType type;
-
-  // Compare two AncestorNodes by (node id, index, type).
-  bool operator<(const AncestorNode& other) const;
-  bool operator==(const AncestorNode& other) const;
-
-  struct Hash {
-    size_t operator()(const AncestorNode&) const;
-  };
 };
 
 // StateMap is responsible for mapping from each graph Node to
@@ -106,7 +68,7 @@ class StateMap {
   using CondId = const CondState*;
 
   // Keep track of which switch/merge node's feed into a node's values.
-  using AncestorState = std::set<AncestorNode>;
+  using AncestorState = std::set<Node*>;
 
   // Every unique ID is mapped to a AncestorState.
   using AncestorId = const AncestorState*;
@@ -183,9 +145,11 @@ class StateMap {
 // of the given graph together.
 class FunctionalizeCond {
  public:
-  // See comment for function `FunctionalizeCond`.
-  static Status Functionalize(Graph* graph, FunctionLibraryDefinition* library,
-                              const NodeFilter& node_filter);
+  // Functionalize all the switch-merge nodes of a loop-free graph into If
+  // nodes. That is, attempt to transform every remaining switch and merge nodes
+  // in the graph into If nodes.
+  // Precondition: All while loops have been removed from graph.
+  static Status Functionalize(Graph* graph, FunctionLibraryDefinition* library);
 
   // Build identity node with the same name as the merge that will be replaced
   // in case the output is fetched/colocated.
@@ -202,12 +166,8 @@ class FunctionalizeCond {
   // Dump graph with the CondState annotated.
   void DumpGraphWithCondState(const string& name);
 
-  // Adds `switch_id` to the list of Switch node ids.
-  void AddSwitchId(int switch_id);
-
  private:
-  FunctionalizeCond(Graph* graph, FunctionLibraryDefinition* library,
-                    const NodeFilter& node_filter);
+  FunctionalizeCond(Graph* graph, FunctionLibraryDefinition* library);
 
   // Performs the actual cond functionalization. Iterate over groups of merge
   // nodes (linked by common predicates & ancestor IDs), from innermost to
@@ -223,7 +183,7 @@ class FunctionalizeCond {
   // This populates the state_map_.
   Status DetermineStates(std::vector<Node*> rev_topo_order);
 
-  // Determine the CondState for a given node using the incoming edges
+  // Determine the CondState for a given node using the incomming edges
   // to the node. Note: it is expected that this node's CondState is only
   // determined once its input's CondState is.
   Status DetermineCondState(Node* dst) {
@@ -259,7 +219,8 @@ class FunctionalizeCond {
 
   // Deletes all nodes in/consumers reachable from switch/merge nodes that were
   // extracted.
-  void DeleteReachableAndDeadNodes(const std::vector<Node*>& merge_order);
+  void DeleteReachableAndDeadNodes(const std::vector<int>& switch_ids,
+                                   const std::vector<Node*>& merge_order);
 
   // Member used to unique the CondState to a unique CondId (AncestorState to a
   // unique AncestorId) and keep track of CondState/CondId
@@ -269,18 +230,10 @@ class FunctionalizeCond {
   // Mapping from merge nodes to predicate.
   std::unordered_map<Node*, OutputTensor> merge_to_predicate_;
 
-  // Mapping from merge nodes to corresponding If node outputs.
-  std::unordered_map<Node*, OutputTensor> merge_to_replacement_;
-
   FunctionLibraryDefinition* library_;
   Graph* graph_;
 
   friend class FunctionalizeCondTest;
-
-  std::vector<int> switch_ids_;
-
-  // Controls which nodes are skipped for functionalization.
-  NodeFilter node_filter_ = {};
 };
 
 }  // namespace functionalize_cond

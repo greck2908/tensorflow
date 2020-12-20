@@ -1,4 +1,4 @@
-# Copyright 2019 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,39 +16,43 @@
 # THIS IS A GENERATED DOCKERFILE.
 #
 # This file was assembled from multiple pieces, whose use is documented
-# throughout. Please refer to the TensorFlow dockerfiles documentation
-# for more information.
+# below. Please refer to the the TensorFlow dockerfiles documentation for
+# more information. Build args are documented as their default value.
+#
+# Ubuntu-based, CPU-only environment for using TensorFlow
+#
+# Start from Ubuntu (no GPU support)
+# --build-arg UBUNTU_VERSION=16.04
+#    ( no description )
+#
+# Python is required for TensorFlow and other libraries.
+# --build-arg USE_PYTHON_3_NOT_2=True
+#    Install python 3 over Python 2
+#
+# Install the TensorFlow Python package.
+# --build-arg TF_PACKAGE=tensorflow (tensorflow|tensorflow-gpu|tf-nightly|tf-nightly-gpu)
+#    The specific TensorFlow Python package to install
+#
+# Configure TensorFlow's shell prompt and login tools.
 
-ARG UBUNTU_VERSION=18.04
+ARG UBUNTU_VERSION=16.04
+FROM ubuntu:${UBUNTU_VERSION}
 
-FROM ubuntu:${UBUNTU_VERSION} as base
-
-RUN apt-get update && apt-get install -y curl
-
-# See http://bugs.python.org/issue19846
-ENV LANG C.UTF-8
+ARG USE_PYTHON_3_NOT_2=True
+ARG _PY_SUFFIX=${USE_PYTHON_3_NOT_2:+3}
+ARG PYTHON=python${_PY_SUFFIX}
+ARG PIP=pip${_PY_SUFFIX}
 
 RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip
+    ${PYTHON} \
+    ${PYTHON}-pip
 
-RUN python3 -m pip --no-cache-dir install --upgrade \
-    "pip<20.3" \
+RUN ${PIP} install --upgrade \
+    pip \
     setuptools
 
-# Some TF tools expect a "python" binary
-RUN ln -s $(which python3) /usr/local/bin/python
-
-# Options:
-#   tensorflow
-#   tensorflow-gpu
-#   tf-nightly
-#   tf-nightly-gpu
-# Set --build-arg TF_PACKAGE_VERSION=1.11.0rc0 to install a specific version.
-# Installs the latest version by default.
 ARG TF_PACKAGE=tensorflow
-ARG TF_PACKAGE_VERSION=
-RUN python3 -m pip install --no-cache-dir ${TF_PACKAGE}${TF_PACKAGE_VERSION:+==${TF_PACKAGE_VERSION}}
+RUN ${PIP} install ${TF_PACKAGE}
 
 COPY bashrc /etc/bash.bashrc
 RUN chmod a+rwx /etc/bash.bashrc

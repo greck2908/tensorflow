@@ -1,8 +1,6 @@
-load("//tensorflow:tensorflow.bzl", "py_strict_library")
+licenses(["notice"])  # Apache 2.0
 
-package(
-    licenses = ["notice"],  # Apache 2.0
-)
+load("//tensorflow:tensorflow.bzl", "py_test")
 
 filegroup(
     name = "all_files",
@@ -16,19 +14,18 @@ filegroup(
     visibility = ["//tensorflow:__subpackages__"],
 )
 
-py_strict_library(
+py_library(
     name = "autograph",
     srcs = [
         "__init__.py",
     ],
-    srcs_version = "PY3",
+    srcs_version = "PY2AND3",
     visibility = ["//visibility:public"],
     deps = [
         "//tensorflow/python:util",
-        "//tensorflow/python/autograph/core",
         "//tensorflow/python/autograph/impl",
         "//tensorflow/python/autograph/lang",
-        "//tensorflow/python/autograph/operators",
+        "//tensorflow/python/autograph/pyct",
         "//tensorflow/python/autograph/utils",
     ],
 )

@@ -56,25 +56,14 @@ class MutableHashTableOfScalars final : public LookupInterface {
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
               const Tensor& default_value) override {
+    const V default_val = default_value.flat<V>()(0);
     const auto key_values = key.flat<K>();
     auto value_values = value->flat<V>();
-    const auto default_flat = default_value.flat<V>();
-
-    int64 total = value_values.size();
-    int64 default_total = default_flat.size();
-    bool is_full_size_default = (total == default_total);
 
     tf_shared_lock l(mu_);
     for (int64 i = 0; i < key_values.size(); ++i) {
-      // is_full_size_default is true:
-      //   Each key has an independent default value, key_values(i)
-      //   corresponding uses default_flat(i) as its default value.
-      //
-      // is_full_size_default is false:
-      //   All keys will share the default_flat(0) as default value.
       value_values(i) = gtl::FindWithDefault(
-          table_, SubtleMustCopyIfIntegral(key_values(i)),
-          is_full_size_default ? default_flat(i) : default_flat(0));
+          table_, SubtleMustCopyIfIntegral(key_values(i)), default_val);
     }
 
     return Status::OK();
@@ -160,7 +149,7 @@ class MutableHashTableOfScalars final : public LookupInterface {
 
  private:
   mutable mutex mu_;
-  std::unordered_map<K, V> table_ TF_GUARDED_BY(mu_);
+  std::unordered_map<K, V> table_ GUARDED_BY(mu_);
 };
 
 // Lookup table that wraps an unordered_map. Behaves identical to
@@ -184,14 +173,10 @@ class MutableHashTableOfTensors final : public LookupInterface {
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
               const Tensor& default_value) override {
-    const auto default_flat = default_value.flat_inner_dims<V, 2>();
+    const auto default_flat = default_value.flat<V>();
     const auto key_values = key.flat<K>();
     auto value_values = value->flat_inner_dims<V, 2>();
     int64 value_dim = value_shape_.dim_size(0);
-
-    int64 total = value_values.size();
-    int64 default_total = default_flat.size();
-    bool is_full_size_default = (total == default_total);
 
     tf_shared_lock l(mu_);
     for (int64 i = 0; i < key_values.size(); ++i) {
@@ -202,15 +187,8 @@ class MutableHashTableOfTensors final : public LookupInterface {
           value_values(i, j) = value_vec->at(j);
         }
       } else {
-        // is_full_size_default is true:
-        //   Each key has an independent default value, key_values(i)
-        //   corresponding uses default_flat(i) as its default value.
-        //
-        // is_full_size_default is false:
-        //   All keys will share the default_flat(0) as default value.
         for (int64 j = 0; j < value_dim; j++) {
-          value_values(i, j) =
-              is_full_size_default ? default_flat(i, j) : default_flat(0, j);
+          value_values(i, j) = default_flat(j);
         }
       }
     }
@@ -311,7 +289,7 @@ class MutableHashTableOfTensors final : public LookupInterface {
   TensorShape value_shape_;
   mutable mutex mu_;
   typedef gtl::InlinedVector<V, 4> ValueArray;
-  std::unordered_map<K, ValueArray> table_ TF_GUARDED_BY(mu_);
+  std::unordered_map<K, ValueArray> table_ GUARDED_BY(mu_);
 };
 
 namespace {
@@ -321,7 +299,7 @@ inline uint64 HashScalar(const T& key) {
   return static_cast<uint64>(key);
 }
 
-inline uint64 HashScalar(const tstring& key) { return Hash64(key); }
+inline uint64 HashScalar(const string& key) { return Hash64(key); }
 
 // If the given shape is a scalar return {1} instead. Otherwise leave it alone.
 TensorShape MaybeVectorizeShape(const TensorShape& shape) {
@@ -397,13 +375,13 @@ class MutableDenseHashTable final : public LookupInterface {
     OP_REQUIRES_OK(ctx, AllocateBuckets(ctx, initial_num_buckets));
   }
 
-  size_t size() const override TF_LOCKS_EXCLUDED(mu_) {
+  size_t size() const override LOCKS_EXCLUDED(mu_) {
     tf_shared_lock l(mu_);
     return num_entries_;
   }
 
   Status Find(OpKernelContext* ctx, const Tensor& key, Tensor* value,
-              const Tensor& default_value) override TF_LOCKS_EXCLUDED(mu_) {
+              const Tensor& default_value) override LOCKS_EXCLUDED(mu_) {
     const int64 num_elements = (key.dims() == 0) ? 1 : key.dim_size(0);
     const int64 key_size = key_shape_.num_elements();
     const int64 value_size = value_shape_.num_elements();
@@ -472,7 +450,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status Insert(OpKernelContext* ctx, const Tensor& key,
-                const Tensor& value) override TF_LOCKS_EXCLUDED(mu_) {
+                const Tensor& value) override LOCKS_EXCLUDED(mu_) {
     const int64 batch_size = (key.dims() == 0) ? 1 : key.dim_size(0);
     if (key.NumElements() != batch_size * key_shape_.num_elements()) {
       TensorShape expected_shape({batch_size});
@@ -498,7 +476,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status Remove(OpKernelContext* ctx, const Tensor& key) override
-      TF_LOCKS_EXCLUDED(mu_) {
+      LOCKS_EXCLUDED(mu_) {
     if (key.NumElements() != key.dim_size(0) * key_shape_.num_elements()) {
       TensorShape expected_shape({key.dim_size(0)});
       expected_shape.AppendShape(key_shape_);
@@ -511,7 +489,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status ImportValues(OpKernelContext* ctx, const Tensor& keys,
-                      const Tensor& values) override TF_LOCKS_EXCLUDED(mu_) {
+                      const Tensor& values) override LOCKS_EXCLUDED(mu_) {
     mutex_lock l(mu_);
     num_buckets_ = keys.dim_size(0);
     key_buckets_ = PersistentTensor(keys);
@@ -537,7 +515,7 @@ class MutableDenseHashTable final : public LookupInterface {
     return Status::OK();
   }
 
-  Status ExportValues(OpKernelContext* ctx) override TF_LOCKS_EXCLUDED(mu_) {
+  Status ExportValues(OpKernelContext* ctx) override LOCKS_EXCLUDED(mu_) {
     tf_shared_lock l(mu_);
     Tensor key_buckets_tensor = *key_buckets_.AccessTensor(ctx);
     Tensor value_buckets_tensor = *value_buckets_.AccessTensor(ctx);
@@ -579,7 +557,7 @@ class MutableDenseHashTable final : public LookupInterface {
 
   TensorShape value_shape() const override { return value_shape_; }
 
-  int64 MemoryUsed() const override TF_LOCKS_EXCLUDED(mu_) {
+  int64 MemoryUsed() const override {
     tf_shared_lock l(mu_);
     return sizeof(MutableDenseHashTable) + key_buckets_.AllocatedBytes() +
            value_buckets_.AllocatedBytes() + empty_key_.AllocatedBytes();
@@ -588,7 +566,7 @@ class MutableDenseHashTable final : public LookupInterface {
  private:
   Status DoInsert(OpKernelContext* ctx, const Tensor& key, const Tensor& value,
                   bool ignore_empty_and_deleted_key)
-      TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     const int64 num_elements = (key.dims() == 0) ? 1 : key.dim_size(0);
     const int64 value_size = value_shape_.num_elements();
     const int64 key_size = key_shape_.num_elements();
@@ -659,7 +637,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status DoRemove(OpKernelContext* ctx, const Tensor& key)
-      TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     const int64 num_elements = key.dim_size(0);
     const int64 key_size = key_shape_.num_elements();
     const auto key_matrix = key.shaped<K, 2>({num_elements, key_size});
@@ -712,7 +690,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status AllocateBuckets(OpKernelContext* ctx, int64 new_num_buckets)
-      TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     if (new_num_buckets < 4 ||
         ((new_num_buckets & (new_num_buckets - 1)) != 0)) {
       return errors::InvalidArgument(
@@ -753,7 +731,7 @@ class MutableDenseHashTable final : public LookupInterface {
   }
 
   Status Rebucket(OpKernelContext* ctx, int64 num_new_buckets)
-      TF_EXCLUSIVE_LOCKS_REQUIRED(mu_) {
+      EXCLUSIVE_LOCKS_REQUIRED(mu_) {
     Tensor old_key_buckets = *key_buckets_.AccessTensor(ctx);
     Tensor old_value_buckets = *value_buckets_.AccessTensor(ctx);
     TF_RETURN_IF_ERROR(AllocateBuckets(ctx, num_new_buckets));
@@ -788,10 +766,10 @@ class MutableDenseHashTable final : public LookupInterface {
   TensorShape value_shape_;
   float max_load_factor_;
   mutable mutex mu_;
-  int64 num_entries_ TF_GUARDED_BY(mu_);
-  int64 num_buckets_ TF_GUARDED_BY(mu_);
-  PersistentTensor key_buckets_ TF_GUARDED_BY(mu_);
-  PersistentTensor value_buckets_ TF_GUARDED_BY(mu_);
+  int64 num_entries_ GUARDED_BY(mu_);
+  int64 num_buckets_ GUARDED_BY(mu_);
+  PersistentTensor key_buckets_ GUARDED_BY(mu_);
+  PersistentTensor value_buckets_ GUARDED_BY(mu_);
   PersistentTensor empty_key_;
   uint64 empty_key_hash_;
   PersistentTensor deleted_key_;
@@ -800,38 +778,20 @@ class MutableDenseHashTable final : public LookupInterface {
 
 }  // namespace lookup
 
-// Base class for kernels that take a LookupTable handle as the 0th input.
-class LookupTableOpKernel : public OpKernel {
- public:
-  explicit LookupTableOpKernel(OpKernelConstruction* ctx)
-      : OpKernel(ctx),
-        expected_input_0_(ctx->input_type(0) == DT_RESOURCE ? DT_RESOURCE
-                                                            : DT_STRING_REF) {}
-
- protected:
-  Status GetTable(OpKernelContext* ctx, lookup::LookupInterface** table) {
-    if (expected_input_0_ == DT_RESOURCE) {
-      return GetResourceLookupTable("table_handle", ctx, table);
-    } else {
-      return GetReferenceLookupTable("table_handle", ctx, table);
-    }
-  }
-
-  // Input 0 could be a STRING_REF or a RESOURCE
-  const DataType expected_input_0_;
-};
-
 // Table lookup op. Perform the lookup operation on the given table.
-class LookupTableFindOp : public LookupTableOpKernel {
+class LookupTableFindOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableFindOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
-    DataTypeVector expected_inputs = {expected_input_0_, table->key_dtype(),
+    // Input 0 could be a STRING_REF or a RESOURCE
+    DataType expected_input_0 =
+        (ctx->input_dtype(0) == DT_RESOURCE) ? DT_RESOURCE : DT_STRING_REF;
+    DataTypeVector expected_inputs = {expected_input_0, table->key_dtype(),
                                       table->value_dtype()};
     DataTypeVector expected_outputs = {table->value_dtype()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, expected_outputs));
@@ -856,16 +816,18 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableFindV2").Device(DEVICE_CPU),
                         LookupTableFindOp);
 
 // Table insert op.
-class LookupTableInsertOp : public LookupTableOpKernel {
+class LookupTableInsertOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableInsertOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
-    DataTypeVector expected_inputs = {expected_input_0_, table->key_dtype(),
+    DataType expected_input_0 =
+        (ctx->input_dtype(0) == DT_RESOURCE) ? DT_RESOURCE : DT_STRING_REF;
+    DataTypeVector expected_inputs = {expected_input_0, table->key_dtype(),
                                       table->value_dtype()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
 
@@ -891,16 +853,18 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableInsertV2").Device(DEVICE_CPU),
                         LookupTableInsertOp);
 
 // Table remove op.
-class LookupTableRemoveOp : public LookupTableOpKernel {
+class LookupTableRemoveOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableRemoveOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
-    DataTypeVector expected_inputs = {expected_input_0_, table->key_dtype()};
+    DataType expected_input_0 =
+        (ctx->input_dtype(0) == DT_RESOURCE) ? DT_RESOURCE : DT_STRING_REF;
+    DataTypeVector expected_inputs = {expected_input_0, table->key_dtype()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
 
     const Tensor& key = ctx->input(1);
@@ -922,13 +886,13 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableRemoveV2").Device(DEVICE_CPU),
                         LookupTableRemoveOp);
 
 // Op that returns the size of the given table.
-class LookupTableSizeOp : public LookupTableOpKernel {
+class LookupTableSizeOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableSizeOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
     Tensor* out;
@@ -943,13 +907,13 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableSizeV2").Device(DEVICE_CPU),
                         LookupTableSizeOp);
 
 // Op that outputs tensors of all keys and all values.
-class LookupTableExportOp : public LookupTableOpKernel {
+class LookupTableExportOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableExportOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
     OP_REQUIRES_OK(ctx, table->ExportValues(ctx));
@@ -962,16 +926,18 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableExportV2").Device(DEVICE_CPU),
                         LookupTableExportOp);
 
 // Clear the table and insert data.
-class LookupTableImportOp : public LookupTableOpKernel {
+class LookupTableImportOp : public OpKernel {
  public:
-  using LookupTableOpKernel::LookupTableOpKernel;
+  explicit LookupTableImportOp(OpKernelConstruction* ctx) : OpKernel(ctx) {}
 
   void Compute(OpKernelContext* ctx) override {
     lookup::LookupInterface* table;
-    OP_REQUIRES_OK(ctx, GetTable(ctx, &table));
+    OP_REQUIRES_OK(ctx, GetLookupTable("table_handle", ctx, &table));
     core::ScopedUnref unref_me(table);
 
-    DataTypeVector expected_inputs = {expected_input_0_, table->key_dtype(),
+    DataType expected_input_0 =
+        (ctx->input_dtype(0) == DT_RESOURCE) ? DT_RESOURCE : DT_STRING_REF;
+    DataTypeVector expected_inputs = {expected_input_0, table->key_dtype(),
                                       table->value_dtype()};
     OP_REQUIRES_OK(ctx, ctx->MatchSignature(expected_inputs, {}));
 
@@ -1016,18 +982,18 @@ REGISTER_KERNEL_BUILDER(Name("LookupTableImportV2").Device(DEVICE_CPU),
 REGISTER_KERNEL(int32, double);
 REGISTER_KERNEL(int32, float);
 REGISTER_KERNEL(int32, int32);
-REGISTER_KERNEL(int32, tstring);
+REGISTER_KERNEL(int32, string);
 REGISTER_KERNEL(int64, double);
 REGISTER_KERNEL(int64, float);
 REGISTER_KERNEL(int64, int32);
 REGISTER_KERNEL(int64, int64);
-REGISTER_KERNEL(int64, tstring);
-REGISTER_KERNEL(tstring, bool);
-REGISTER_KERNEL(tstring, double);
-REGISTER_KERNEL(tstring, float);
-REGISTER_KERNEL(tstring, int32);
-REGISTER_KERNEL(tstring, int64);
-REGISTER_KERNEL(tstring, tstring);
+REGISTER_KERNEL(int64, string);
+REGISTER_KERNEL(string, bool);
+REGISTER_KERNEL(string, double);
+REGISTER_KERNEL(string, float);
+REGISTER_KERNEL(string, int32);
+REGISTER_KERNEL(string, int64);
+REGISTER_KERNEL(string, string);
 
 #undef REGISTER_KERNEL
 
@@ -1055,13 +1021,13 @@ REGISTER_KERNEL(int64, double);
 REGISTER_KERNEL(int64, float);
 REGISTER_KERNEL(int64, int32);
 REGISTER_KERNEL(int64, int64);
-REGISTER_KERNEL(int64, tstring);
+REGISTER_KERNEL(int64, string);
 REGISTER_KERNEL(int64, Variant);
-REGISTER_KERNEL(tstring, bool);
-REGISTER_KERNEL(tstring, double);
-REGISTER_KERNEL(tstring, float);
-REGISTER_KERNEL(tstring, int32);
-REGISTER_KERNEL(tstring, int64);
+REGISTER_KERNEL(string, bool);
+REGISTER_KERNEL(string, double);
+REGISTER_KERNEL(string, float);
+REGISTER_KERNEL(string, int32);
+REGISTER_KERNEL(string, int64);
 
 #undef REGISTER_KERNEL
 
@@ -1089,12 +1055,12 @@ REGISTER_KERNEL(int64, double);
 REGISTER_KERNEL(int64, float);
 REGISTER_KERNEL(int64, int32);
 REGISTER_KERNEL(int64, int64);
-REGISTER_KERNEL(int64, tstring);
-REGISTER_KERNEL(tstring, bool);
-REGISTER_KERNEL(tstring, double);
-REGISTER_KERNEL(tstring, float);
-REGISTER_KERNEL(tstring, int32);
-REGISTER_KERNEL(tstring, int64);
+REGISTER_KERNEL(int64, string);
+REGISTER_KERNEL(string, bool);
+REGISTER_KERNEL(string, double);
+REGISTER_KERNEL(string, float);
+REGISTER_KERNEL(string, int32);
+REGISTER_KERNEL(string, int64);
 
 #undef REGISTER_KERNEL
 
@@ -1124,12 +1090,11 @@ REGISTER_KERNEL(int64, float);
 REGISTER_KERNEL(int64, int32);
 REGISTER_KERNEL(int64, int64);
 REGISTER_KERNEL(int64, Variant);
-REGISTER_KERNEL(tstring, bool);
-REGISTER_KERNEL(tstring, double);
-REGISTER_KERNEL(tstring, float);
-REGISTER_KERNEL(tstring, int32);
-REGISTER_KERNEL(tstring, int64);
-REGISTER_KERNEL(tstring, ResourceHandle);
+REGISTER_KERNEL(string, bool);
+REGISTER_KERNEL(string, double);
+REGISTER_KERNEL(string, float);
+REGISTER_KERNEL(string, int32);
+REGISTER_KERNEL(string, int64);
 
 #undef REGISTER_KERNEL
 

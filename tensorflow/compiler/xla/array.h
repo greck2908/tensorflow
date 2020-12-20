@@ -61,9 +61,9 @@ template <>
 struct conjunction<> : std::true_type {};
 
 // A type trait that is valid when all elements in a parameter pack are of
-// integral type. Not using an alias template to work around MSVC 14.00 bug.
-template <typename... Ts>
-struct pack_is_integral : conjunction<std::is_integral<Ts>...> {};
+// integral type.
+template <typename... T>
+using pack_is_integral = conjunction<std::is_integral<T>...>;
 
 // Compares three same-sized vectors elementwise. For each item in `values`,
 // returns false if any of values[i] is outside the half-open range [starts[i],
@@ -272,15 +272,6 @@ class Array {
     std::iota(&values_[0], &values_[0] + num_elements(), value);
   }
 
-  // Fills the array with a repeating sequence:
-  //   [value, value + 1, ..., value + length - 1, value, ... ]
-  void FillRepeatedIota(const T& value, int64 length) {
-    for (int64 i = 0; i < num_elements(); i += length) {
-      std::iota(&values_[i], &values_[std::min(i + length, num_elements())],
-                value);
-    }
-  }
-
   // Fills the array with the sequence i*multiplier for i=0,1,...
   void FillWithMultiples(const T& multiplier) {
     for (int64 i = 0; i < num_elements(); ++i) {
@@ -289,19 +280,13 @@ class Array {
   }
 
   // Fills the array with random normal variables with the specified mean.
-  void FillRandom(const T& stddev, double mean = 0.0, int seed = 12345) {
-    FillRandomDouble(static_cast<double>(stddev), mean, seed);
-  }
-
-  void FillRandomDouble(double stddev, double mean = 0.0, int seed = 12345) {
+  void FillRandom(const T& value, const double mean = 0.0,
+                  const int seed = 12345) {
     std::mt19937 g(seed);
-    std::normal_distribution<double> distribution(mean, stddev);
+    std::normal_distribution<double> distribution(mean,
+                                                  static_cast<double>(value));
     for (int64 i = 0; i < num_elements(); ++i) {
-      if (std::is_same<T, bool>()) {
-        values_[i] = static_cast<T>(distribution(g) > 0.0);
-      } else {
-        values_[i] = static_cast<T>(distribution(g));
-      }
+      values_[i] = static_cast<T>(distribution(g));
     }
   }
 
@@ -409,8 +394,7 @@ class Array {
 
   // Returns the size of the dimension at the given index.
   int64 dim(int64 n) const {
-    const int64 sizes_size = sizes_.size();
-    CHECK(n < sizes_size);
+    CHECK(n < sizes_.size());
     return sizes_[n];
   }
 
@@ -434,7 +418,7 @@ class Array {
     if (sizes_.size() != other.sizes_.size()) {
       return false;
     }
-    for (int64 i = 0, end = sizes_.size(); i < end; ++i) {
+    for (int64 i = 0; i < sizes_.size(); ++i) {
       if (sizes_[i] != other.sizes_[i]) {
         return false;
       }
@@ -581,12 +565,6 @@ class Array {
   std::vector<int64> sizes_;
   std::unique_ptr<T[]> values_;
 };
-
-// Specialization of FillRandom() method for complex64 type. Uses real part of
-// the stddev parameter as the standard deviation value.
-template <>
-void Array<complex64>::FillRandom(const complex64& stddev, const double mean,
-                                  const int seed);
 
 }  // namespace xla
 

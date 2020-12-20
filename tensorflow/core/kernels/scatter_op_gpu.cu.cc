@@ -13,7 +13,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 
 #define EIGEN_USE_GPU
 
@@ -41,7 +41,6 @@ typedef Eigen::GpuDevice GPUDevice;
   DEFINE_GPU_SPECS_INDEX(T, int32); \
   DEFINE_GPU_SPECS_INDEX(T, int64);
 
-DEFINE_GPU_SPECS(Eigen::half);
 DEFINE_GPU_SPECS(float);
 DEFINE_GPU_SPECS(double);
 // TODO: The following fails to compile.
@@ -53,4 +52,4 @@ DEFINE_GPU_SPECS(double);
 
 }  // namespace tensorflow
 
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA

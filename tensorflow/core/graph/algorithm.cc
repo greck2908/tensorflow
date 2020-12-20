@@ -22,29 +22,25 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 
 namespace tensorflow {
-namespace {
-template <typename T>
-void DFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
-                   const std::function<void(T)>& enter,
-                   const std::function<void(T)>& leave,
-                   const NodeComparator& stable_comparator,
-                   const EdgeFilter& edge_filter) {
+
+void DFS(const Graph& g, const std::function<void(Node*)>& enter,
+         const std::function<void(Node*)>& leave,
+         const NodeComparator& stable_comparator,
+         const EdgeFilter& edge_filter) {
   // Stack of work to do.
   struct Work {
-    T node;
+    Node* node;
     bool leave;  // Are we entering or leaving n?
   };
-  std::vector<Work> stack(start.size());
-  for (int i = 0; i < start.size(); ++i) {
-    stack[i] = Work{start[i], false};
-  }
+  std::vector<Work> stack;
+  stack.push_back(Work{g.source_node(), false});
 
   std::vector<bool> visited(g.num_node_ids(), false);
   while (!stack.empty()) {
     Work w = stack.back();
     stack.pop_back();
 
-    T n = w.node;
+    Node* n = w.node;
     if (w.leave) {
       leave(n);
       continue;
@@ -84,38 +80,11 @@ void DFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
     }
   }
 }
-}  // namespace
-
-void DFS(const Graph& g, const std::function<void(Node*)>& enter,
-         const std::function<void(Node*)>& leave,
-         const NodeComparator& stable_comparator,
-         const EdgeFilter& edge_filter) {
-  DFSFromHelper(g, {g.source_node()}, enter, leave, stable_comparator,
-                edge_filter);
-}
-
-void DFSFrom(const Graph& g, gtl::ArraySlice<Node*> start,
-             const std::function<void(Node*)>& enter,
-             const std::function<void(Node*)>& leave,
-             const NodeComparator& stable_comparator,
-             const EdgeFilter& edge_filter) {
-  DFSFromHelper(g, start, enter, leave, stable_comparator, edge_filter);
-}
-
-void DFSFrom(const Graph& g, gtl::ArraySlice<const Node*> start,
-             const std::function<void(const Node*)>& enter,
-             const std::function<void(const Node*)>& leave,
-             const NodeComparator& stable_comparator,
-             const EdgeFilter& edge_filter) {
-  DFSFromHelper(g, start, enter, leave, stable_comparator, edge_filter);
-}
 
 void ReverseDFS(const Graph& g, const std::function<void(Node*)>& enter,
                 const std::function<void(Node*)>& leave,
-                const NodeComparator& stable_comparator,
-                const EdgeFilter& edge_filter) {
-  ReverseDFSFrom(g, {g.sink_node()}, enter, leave, stable_comparator,
-                 edge_filter);
+                const NodeComparator& stable_comparator) {
+  ReverseDFSFrom(g, {g.sink_node()}, enter, leave, stable_comparator);
 }
 
 namespace {
@@ -124,8 +93,7 @@ template <typename T>
 void ReverseDFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
                           const std::function<void(T)>& enter,
                           const std::function<void(T)>& leave,
-                          const NodeComparator& stable_comparator,
-                          const EdgeFilter& edge_filter) {
+                          const NodeComparator& stable_comparator) {
   // Stack of work to do.
   struct Work {
     T node;
@@ -164,9 +132,7 @@ void ReverseDFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
     if (stable_comparator) {
       std::vector<T> nodes_sorted;
       for (const Edge* in_edge : n->in_edges()) {
-        if (!edge_filter || edge_filter(*in_edge)) {
-          nodes_sorted.emplace_back(in_edge->src());
-        }
+        nodes_sorted.emplace_back(in_edge->src());
       }
       std::sort(nodes_sorted.begin(), nodes_sorted.end(), stable_comparator);
       for (T in : nodes_sorted) {
@@ -174,9 +140,7 @@ void ReverseDFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
       }
     } else {
       for (const Edge* in_edge : n->in_edges()) {
-        if (!edge_filter || edge_filter(*in_edge)) {
-          add_work(in_edge->src());
-        }
+        add_work(in_edge->src());
       }
     }
   }
@@ -187,17 +151,15 @@ void ReverseDFSFromHelper(const Graph& g, gtl::ArraySlice<T> start,
 void ReverseDFSFrom(const Graph& g, gtl::ArraySlice<const Node*> start,
                     const std::function<void(const Node*)>& enter,
                     const std::function<void(const Node*)>& leave,
-                    const NodeComparator& stable_comparator,
-                    const EdgeFilter& edge_filter) {
-  ReverseDFSFromHelper(g, start, enter, leave, stable_comparator, edge_filter);
+                    const NodeComparator& stable_comparator) {
+  ReverseDFSFromHelper(g, start, enter, leave, stable_comparator);
 }
 
 void ReverseDFSFrom(const Graph& g, gtl::ArraySlice<Node*> start,
                     const std::function<void(Node*)>& enter,
                     const std::function<void(Node*)>& leave,
-                    const NodeComparator& stable_comparator,
-                    const EdgeFilter& edge_filter) {
-  ReverseDFSFromHelper(g, start, enter, leave, stable_comparator, edge_filter);
+                    const NodeComparator& stable_comparator) {
+  ReverseDFSFromHelper(g, start, enter, leave, stable_comparator);
 }
 
 void GetPostOrder(const Graph& g, std::vector<Node*>* order,
@@ -216,38 +178,41 @@ void GetReversePostOrder(const Graph& g, std::vector<Node*>* order,
 }
 
 bool PruneForReverseReachability(Graph* g,
-                                 std::unordered_set<const Node*> start) {
+                                 std::unordered_set<const Node*> visited) {
   // Compute set of nodes that we need to traverse in order to reach
-  // the nodes in "start" by performing a breadth-first search from those
+  // the nodes in "nodes" by performing a breadth-first search from those
   // nodes, and accumulating the visited nodes.
-  std::vector<bool> visited(g->num_node_ids());
-  for (auto node : start) {
-    visited[node->id()] = true;
+  std::deque<const Node*> queue;
+  for (const Node* n : visited) {
+    VLOG(2) << "Reverse reach init: " << n->name();
+    queue.push_back(n);
   }
-  std::deque<const Node*> queue(start.begin(), start.end());
   while (!queue.empty()) {
     const Node* n = queue.front();
     queue.pop_front();
     for (const Node* in : n->in_nodes()) {
-      if (!visited[in->id()]) {
-        visited[in->id()] = true;
+      if (visited.insert(in).second) {
         queue.push_back(in);
         VLOG(2) << "Reverse reach : " << n->name() << " from " << in->name();
       }
     }
   }
 
-  // Make a pass over the graph to remove nodes not in "visited".
+  // Make a pass over the graph to remove nodes not in "visited"
+  std::vector<Node*> all_nodes;
+  all_nodes.reserve(g->num_nodes());
+  for (Node* n : g->nodes()) {
+    all_nodes.push_back(n);
+  }
+
   bool any_removed = false;
-  for (int i = 0; i < visited.size(); ++i) {
-    if (!visited[i]) {
-      Node* n = g->FindNodeId(i);
-      if (n != nullptr && !n->IsSource() && !n->IsSink()) {
-        g->RemoveNode(n);
-        any_removed = true;
-      }
+  for (Node* n : all_nodes) {
+    if (visited.count(n) == 0 && !n->IsSource() && !n->IsSink()) {
+      g->RemoveNode(n);
+      any_removed = true;
     }
   }
+
   return any_removed;
 }
 
@@ -257,12 +222,11 @@ bool FixupSourceAndSinkEdges(Graph* g) {
   bool changed = false;
   for (Node* n : g->nodes()) {
     if (!n->IsSource() && n->in_edges().empty()) {
-      g->AddControlEdge(g->source_node(), n,
-                        true /* skip test for duplicates */);
+      g->AddControlEdge(g->source_node(), n);
       changed = true;
     }
     if (!n->IsSink() && n->out_edges().empty()) {
-      g->AddControlEdge(n, g->sink_node(), true /* skip test for duplicates */);
+      g->AddControlEdge(n, g->sink_node());
       changed = true;
     }
   }

@@ -18,11 +18,8 @@ limitations under the License.
 namespace tensorflow {
 REGISTER_KERNEL_BUILDER(Name("LogicalNot").Device(DEVICE_CPU),
                         UnaryOp<CPUDevice, functor::logical_not>);
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
-#if !defined(MLIR_GENERATED_GPU_KERNELS_ENABLED) || \
-    !defined(MLIR_GENERATED_EXPERIMENTAL_GPU_KERNELS_ENABLED)
+#if GOOGLE_CUDA
 REGISTER_KERNEL_BUILDER(Name("LogicalNot").Device(DEVICE_GPU),
                         UnaryOp<GPUDevice, functor::logical_not>);
-#endif
 #endif
 }  // namespace tensorflow

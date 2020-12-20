@@ -38,6 +38,7 @@ limitations under the License.
 #include "tensorflow/stream_executor/launch_dim.h"
 #include "tensorflow/stream_executor/plugin.h"
 #include "tensorflow/stream_executor/rng.h"
+#include "tensorflow/stream_executor/shared_memory_config.h"
 #include "tensorflow/stream_executor/stream.h"
 #include "tensorflow/stream_executor/stream_executor.h"
 #include "tensorflow/stream_executor/stream_executor_internal.h"
@@ -57,19 +58,19 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return port::Status::OK();
   }
 
-  port::Status GetKernel(const MultiKernelLoaderSpec &spec,
-                         KernelBase *kernel) override {
-    return port::UnimplementedError("Not Implemented");
+  bool GetKernel(const MultiKernelLoaderSpec &spec,
+                 KernelBase *kernel) override {
+    return false;
   }
-  port::Status Launch(Stream *stream, const ThreadDim &thread_dims,
-                      const BlockDim &block_dims, const KernelBase &kernel,
-                      const KernelArgsArrayBase &args) override {
-    return port::UnimplementedError("Not Implemented");
+  bool Launch(Stream *stream, const ThreadDim &thread_dims,
+              const BlockDim &block_dims, const KernelBase &kernel,
+              const KernelArgsArrayBase &args) override {
+    return false;
   }
 
-  DeviceMemoryBase Allocate(uint64 size, int64 memory_space) override;
-  void *GetSubBuffer(DeviceMemoryBase *parent, uint64 offset_bytes,
-                     uint64 size_bytes) override;
+  void *Allocate(uint64 size) override;
+  void *AllocateSubBuffer(DeviceMemoryBase *mem, uint64 offset_bytes,
+                          uint64 size_bytes) override;
   void Deallocate(DeviceMemoryBase *mem) override;
 
   void *HostMemoryAllocate(uint64 size) override { return new char[size]; }
@@ -79,9 +80,9 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
   bool HostMemoryRegister(void *mem, uint64 size) override { return true; }
   bool HostMemoryUnregister(void *mem) override { return true; }
 
-  bool Memcpy(Stream *stream, void *host_dst, const DeviceMemoryBase &dev_src,
+  bool Memcpy(Stream *stream, void *host_dst, const DeviceMemoryBase &pop_src,
               uint64 size) override;
-  bool Memcpy(Stream *stream, DeviceMemoryBase *dev_dst, const void *host_src,
+  bool Memcpy(Stream *stream, DeviceMemoryBase *pop_dst, const void *host_src,
               uint64 size) override;
   bool MemcpyDeviceToDevice(Stream *stream, DeviceMemoryBase *pop_dst,
                             const DeviceMemoryBase &host_src,
@@ -89,35 +90,34 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return false;
   }
 
-  port::Status MemZero(Stream *stream, DeviceMemoryBase *location,
-                       uint64 size) override {
-    return port::InternalError("Interpreter can not memzero");
+  bool MemZero(Stream *stream, DeviceMemoryBase *location,
+               uint64 size) override {
+    return false;
   }
-  port::Status Memset(Stream *stream, DeviceMemoryBase *location, uint8 pattern,
-                      uint64 size) override {
-    return port::InternalError("Interpreter can not memset");
+  bool Memset(Stream *stream, DeviceMemoryBase *location, uint8 pattern,
+              uint64 size) override {
+    return false;
   }
-  port::Status Memset32(Stream *stream, DeviceMemoryBase *location,
-                        uint32 pattern, uint64 size) override {
-    return port::InternalError("Interpreter can not memset");
+  bool Memset32(Stream *stream, DeviceMemoryBase *location, uint32 pattern,
+                uint64 size) override {
+    return false;
   }
 
   // No "synchronize all activity" implemented for this platform at the moment.
   bool SynchronizeAllActivity() override { return true; }
-  port::Status SynchronousMemZero(DeviceMemoryBase *location,
-                                  uint64 size) override {
-    return port::InternalError("Interpreter can not memzero");
+  bool SynchronousMemZero(DeviceMemoryBase *location, uint64 size) override {
+    return false;
   }
 
-  port::Status SynchronousMemSet(DeviceMemoryBase *location, int value,
-                                 uint64 size) override {
-    return port::InternalError("Interpreter can not memset");
+  bool SynchronousMemSet(DeviceMemoryBase *location, int value,
+                         uint64 size) override {
+    return false;
   }
 
-  port::Status SynchronousMemcpy(DeviceMemoryBase *dev_dst,
+  port::Status SynchronousMemcpy(DeviceMemoryBase *pop_dst,
                                  const void *host_src, uint64 size) override;
   port::Status SynchronousMemcpy(void *host_dst,
-                                 const DeviceMemoryBase &dev_src,
+                                 const DeviceMemoryBase &pop_src,
                                  uint64 size) override;
   port::Status SynchronousMemcpyDeviceToDevice(DeviceMemoryBase *pop_dst,
                                                const DeviceMemoryBase &pop_src,
@@ -125,23 +125,22 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
-  bool HostCallback(Stream *stream,
-                    std::function<port::Status()> callback) override;
+  bool HostCallback(Stream *stream, std::function<void()> callback) override;
 
   port::Status AllocateEvent(Event *event) override {
-    return port::Status::OK();
+    return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
   port::Status DeallocateEvent(Event *event) override {
-    return port::Status::OK();
+    return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
   port::Status RecordEvent(Stream *stream, Event *event) override {
-    return port::Status{port::error::UNIMPLEMENTED, "RecordEvent"};
+    return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
   port::Status WaitForEvent(Stream *stream, Event *event) override {
-    return port::Status{port::error::UNIMPLEMENTED, "WaitForEvent"};
+    return port::Status{port::error::UNIMPLEMENTED, ""};
   }
 
   Event::Status PollForEventStatus(Event *event) override {
@@ -165,13 +164,7 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
     return false;
   }
 
-  port::StatusOr<std::unique_ptr<DeviceDescription>> CreateDeviceDescription()
-      const override {
-    return CreateDeviceDescription(0);
-  }
-
-  static port::StatusOr<std::unique_ptr<DeviceDescription>>
-  CreateDeviceDescription(int device_ordinal);
+  DeviceDescription *PopulateDeviceDescription() const override;
 
   port::Status EnablePeerAccessTo(StreamExecutorInterface *other) override {
     return port::Status::OK();
@@ -179,6 +172,15 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
 
   bool CanEnablePeerAccessTo(StreamExecutorInterface *other) override {
     return true;
+  }
+
+  SharedMemoryConfig GetDeviceSharedMemoryConfig() override {
+    return SharedMemoryConfig::kDefault;
+  }
+
+  port::Status SetDeviceSharedMemoryConfig(SharedMemoryConfig config) override {
+    return port::Status{port::error::UNIMPLEMENTED,
+                        "Shared memory not supported"};
   }
 
   std::unique_ptr<internal::EventInterface> CreateEventImplementation()
@@ -193,8 +195,7 @@ class XlaInterpreterExecutor : public internal::StreamExecutorInterface {
 
   std::unique_ptr<internal::StreamInterface> GetStreamImplementation()
       override {
-    return std::unique_ptr<internal::StreamInterface>(
-        new host::HostStream(/*thread_stack_size=*/0));
+    return std::unique_ptr<internal::StreamInterface>(new host::HostStream());
   }
 
   std::unique_ptr<internal::TimerInterface> GetTimerImplementation() override {

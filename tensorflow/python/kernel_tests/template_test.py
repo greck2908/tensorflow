@@ -25,6 +25,7 @@ from tensorflow.python.eager import context
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import random_seed
 from tensorflow.python.framework import test_util
+from tensorflow.python.keras.engine import training
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import init_ops
 from tensorflow.python.ops import math_ops
@@ -71,7 +72,6 @@ def variable_scoped_function_with_local_variable():
 
 class TemplateTest(test.TestCase):
 
-  @test_util.run_deprecated_v1
   def test_end_to_end(self):
     """This test shows a very simple line model with test_loss.
 
@@ -104,10 +104,10 @@ class TemplateTest(test.TestCase):
     train_op = optimizer.minimize(train_loss)
 
     with session.Session() as sess:
-      self.evaluate(variables.global_variables_initializer())
-      initial_test_loss = self.evaluate(test_loss)
-      self.evaluate(train_op)
-      final_test_loss = self.evaluate(test_loss)
+      sess.run(variables.global_variables_initializer())
+      initial_test_loss = sess.run(test_loss)
+      sess.run(train_op)
+      final_test_loss = sess.run(test_loss)
 
     # Parameters are tied, so the loss should have gone down when we trained it.
     self.assertLess(final_test_loss, initial_test_loss)
@@ -160,22 +160,6 @@ class TemplateTest(test.TestCase):
     self.assertNotEqual(len(first), len(result))
 
   @test_util.run_in_graph_and_eager_modes
-  def test_template_with_empty_name(self):
-    tpl = template.make_template("", variable_scoped_function)
-    with variable_scope.variable_scope("outer"):
-      x = variable_scope.get_variable("x", [])
-      v = tpl()
-    self.assertEqual("outer/", tpl.variable_scope_name)
-    self.assertEqual("outer//dummy:0", v.name)
-    if context.executing_eagerly():
-      # In eager mode `x` is not visible to the template since the template does
-      # not rely on global collections.
-      self.assertEqual(1, len(tpl.variables))
-      self.assertIs(v, tpl.variables[0])
-    else:
-      self.assertEqual([x, v], tpl.variables)
-
-  @test_util.run_in_graph_and_eager_modes
   def test_template_with_name(self):
     tmpl1 = template.make_template("s1", variable_scoped_function)
     tmpl2 = template.make_template("s1", variable_scoped_function)
@@ -183,31 +167,29 @@ class TemplateTest(test.TestCase):
     v1 = tmpl1()
     v2 = tmpl1()
     v3 = tmpl2()
-    self.assertIs(v1, v2)
-    self.assertIsNot(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertNotEqual(v1, v3)
     self.assertEqual("s1/dummy:0", v1.name)
     self.assertEqual("s1_1/dummy:0", v3.name)
 
-  @test_util.run_deprecated_v1
   def test_same_unique_name_raise_error(self):
     tmpl1 = template.make_template(
         "_", variable_scoped_function, unique_name_="s1")
     tmpl1()
     tmpl2 = template.make_template(
         "_", variable_scoped_function, unique_name_="s1")
-    with self.assertRaisesRegex(
+    with self.assertRaisesRegexp(
         ValueError, "Variable s1/dummy already exists, disallowed.*"):
       tmpl2()
 
   def test_unique_name_raise_error_in_eager(self):
     with context.eager_mode():
-      with self.assertRaisesRegex(
+      with self.assertRaisesRegexp(
           ValueError,
-          "unique_name_ cannot be used when eager execution is enabled."):
+          "unique_name_ cannot be used when eager exeuction is enabled."):
         template.make_template(
             "_", variable_scoped_function, unique_name_="s1")
 
-  @test_util.run_deprecated_v1
   def test_unique_name_and_reuse(self):
     tmpl1 = template.make_template(
         "_", variable_scoped_function, unique_name_="s1")
@@ -219,8 +201,8 @@ class TemplateTest(test.TestCase):
         "_", variable_scoped_function, unique_name_="s1")
     v3 = tmpl2()
 
-    self.assertIs(v1, v2)
-    self.assertIs(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertEqual(v1, v3)
     self.assertEqual("s1/dummy:0", v1.name)
 
   @test_util.run_in_graph_and_eager_modes
@@ -235,8 +217,8 @@ class TemplateTest(test.TestCase):
     # The template contract requires the following to ignore scope2.
     with variable_scope.variable_scope("scope2"):
       v2 = tmpl1()
-    self.assertIs(v1, v2)
-    self.assertIsNot(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertNotEqual(v1, v3)
     self.assertEqual("scope/s1/dummy:0", v1.name)
     self.assertEqual("scope/s1_1/dummy:0", v3.name)
 
@@ -248,8 +230,8 @@ class TemplateTest(test.TestCase):
     v1 = tmpl1("test")
     v2 = tmpl1("test")
     v3 = tmpl2("test")
-    self.assertIs(v1, v2)
-    self.assertIsNot(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertNotEqual(v1, v3)
     self.assertEqual("s1/test/dummy:0", v1.name)
     self.assertEqual("s1_1/test/dummy:0", v3.name)
 
@@ -258,7 +240,8 @@ class TemplateTest(test.TestCase):
 
   @test_util.run_in_graph_and_eager_modes
   def test_template_without_name(self):
-    with self.assertRaisesRegex(ValueError, "name cannot be None."):
+    with self.assertRaisesRegexp(
+        ValueError, "name cannot be None."):
       template.make_template(None, variable_scoped_function)
 
   @test_util.run_in_graph_and_eager_modes
@@ -272,12 +255,11 @@ class TemplateTest(test.TestCase):
     v1 = tmpl1()
     v2 = tmpl1()
     v3 = tmpl2()
-    self.assertIs(v1, v2)
-    self.assertIsNot(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertNotEqual(v1, v3)
     self.assertEqual("s1/test/dummy:0", v1.name)
     self.assertEqual("s1_1/test/dummy:0", v3.name)
 
-  @test_util.run_deprecated_v1
   def test_enforces_no_extra_trainable_variables(self):
     tmpl = template.make_template("s", function_with_create, trainable=True)
 
@@ -297,14 +279,14 @@ class TemplateTest(test.TestCase):
 
   def test_permits_extra_non_trainable_variables(self):
     tmpl = template.make_template("s", function_with_create, trainable=False)
-    self.assertIs(tmpl(), tmpl())
+    self.assertEqual(tmpl(), tmpl())
 
   def test_permits_extra_non_trainable_variables_eager(self):
     with context.eager_mode():
       tmpl = template.make_template("s",
                                     function_with_side_create,
                                     trainable=False)
-      self.assertIs(tmpl(name="1"), tmpl(name="2"))
+      self.assertEqual(tmpl(name="1"), tmpl(name="2"))
 
   @test_util.run_in_graph_and_eager_modes
   def test_internal_variable_reuse(self):
@@ -315,7 +297,7 @@ class TemplateTest(test.TestCase):
             "x", initializer=init_ops.zeros_initializer(), shape=[])
       with variable_scope.variable_scope(vs, reuse=True):
         v2 = variable_scope.get_variable("x")
-      self.assertIs(v1, v2)
+      self.assertEqual(v1, v2)
       return v1
 
     tmpl1 = template.make_template("s1", nested)
@@ -324,8 +306,8 @@ class TemplateTest(test.TestCase):
     v1 = tmpl1()
     v2 = tmpl1()
     v3 = tmpl2()
-    self.assertIs(v1, v2)
-    self.assertIsNot(v1, v3)
+    self.assertEqual(v1, v2)
+    self.assertNotEqual(v1, v3)
     self.assertEqual("s1/nested/x:0", v1.name)
     self.assertEqual("s1_1/nested/x:0", v3.name)
 
@@ -339,18 +321,14 @@ class TemplateTest(test.TestCase):
       v2 = nested2()
 
       # nested1 and nested2 should not share variables
-      self.assertIsNot(v1, v2)
+      self.assertNotEqual(v1, v2)
 
       # Variables created by nested1 should be isolated from variables
       # created by nested2.
-      self.assertEqual(1, len(nested1.variables))
-      self.assertEqual(1, len(nested2.variables))
-      self.assertIs(nested1.variables[0], v1)
-      self.assertIs(nested2.variables[0], v2)
-      self.assertEqual(1, len(nested1.trainable_variables))
-      self.assertEqual(1, len(nested2.trainable_variables))
-      self.assertIs(nested1.trainable_variables[0], v1)
-      self.assertIs(nested2.trainable_variables[0], v2)
+      self.assertEqual(nested1.variables, [v1])
+      self.assertEqual(nested2.variables, [v2])
+      self.assertEqual(nested1.trainable_variables, [v1])
+      self.assertEqual(nested2.trainable_variables, [v2])
       self.assertEqual(len(nested1.non_trainable_variables), 0)
       self.assertEqual(len(nested2.non_trainable_variables), 0)
       return v1, v2
@@ -364,21 +342,15 @@ class TemplateTest(test.TestCase):
 
     # The second invocation of tmpl1 should reuse the variables
     # created in the first invocation.
-    self.assertIs(v1, v3)
-    self.assertIs(v2, v4)
-    for v, w in zip(tmpl1.variables, [v1, v2]):
-      self.assertIs(v, w)
-    for v, w in zip(tmpl1.trainable_variables, [v1, v2]):
-      self.assertIs(v, w)
+    self.assertEqual([v1, v2], [v3, v4])
+    self.assertEqual(tmpl1.variables, [v1, v2])
+    self.assertEqual(tmpl1.trainable_variables, [v1, v2])
     self.assertEqual(len(tmpl1.non_trainable_variables), 0)
 
     # tmpl1 and tmpl2 should not share variables.
-    self.assertIsNot(v1, v5)
-    self.assertIsNot(v2, v6)
-    for v, w in zip(tmpl2.variables, [v5, v6]):
-      self.assertIs(v, w)
-    for v, w in zip(tmpl2.trainable_variables, [v5, v6]):
-      self.assertIs(v, w)
+    self.assertNotEqual([v1, v2], [v5, v6])
+    self.assertSequenceEqual(tmpl2.variables, [v5, v6])
+    self.assertSequenceEqual(tmpl2.trainable_variables, [v5, v6])
     self.assertEqual(len(tmpl2.non_trainable_variables), 0)
     self.assertEqual("s1/nested/dummy:0", v1.name)
     self.assertEqual("s1/nested_1/dummy:0", v2.name)
@@ -388,6 +360,23 @@ class TemplateTest(test.TestCase):
     self.assertEqual(2, len(tmpl1._checkpoint_dependencies))
     self.assertEqual("nested", tmpl1._checkpoint_dependencies[0].name)
     self.assertEqual("nested_1", tmpl1._checkpoint_dependencies[1].name)
+    model = training.Model()
+    model.template = tmpl1
+    self.assertEqual(model.variables, [v1, v2])
+    self.assertEqual(model.trainable_variables, [v1, v2])
+    self.assertEqual(len(model.non_trainable_variables), 0)
+    model.templates = [tmpl2]
+    self.assertEqual(model.variables, [v1, v2, v5, v6])
+    self.assertEqual(model.trainable_variables, [v1, v2, v5, v6])
+    self.assertEqual(len(model.non_trainable_variables), 0)
+    # Make sure losses, layers, and updates aren't broken by having a Template
+    # in the mix, which does not expose any updates or losses.
+    self.assertEqual([], model.layers)
+    self.assertEqual([], model.updates)
+    self.assertEqual([], model.losses)
+    self.assertEqual([], model.templates.layers)
+    self.assertEqual([], model.templates.updates)
+    self.assertEqual([], model.templates.losses)
 
   @test_util.run_in_graph_and_eager_modes
   def test_nested_templates_with_defun(self):
@@ -414,13 +403,15 @@ class TemplateTest(test.TestCase):
       v1 = nested1.variables
       v2 = nested2.variables
 
-      self.assertEqual(len(v1), 1)
-      self.assertEqual(len(v2), 1)
-
       # nested1 and nested2 should not share variables
-      self.assertIsNot(v1[0], v2[0])
-      self.assertIs(nested1.trainable_variables[0], v1[0])
-      self.assertIs(nested2.trainable_variables[0], v2[0])
+      self.assertNotEqual(v1, v2)
+
+      # Variables created by nested1 should be isolated from variables
+      # created by nested2.
+      self.assertEqual(nested1.variables, v1)
+      self.assertEqual(nested2.variables, v2)
+      self.assertEqual(nested1.trainable_variables, v1)
+      self.assertEqual(nested2.trainable_variables, v2)
       self.assertEqual(len(nested1.non_trainable_variables), 0)
       self.assertEqual(len(nested2.non_trainable_variables), 0)
 
@@ -436,13 +427,10 @@ class TemplateTest(test.TestCase):
 
     # The second invocation of tmpl1 should reuse the variables
     # created in the first invocation.
-    for v, w in zip(v1, v2):
-      self.assertIs(v, w)
+    self.assertSequenceEqual(v1, v2)
 
     # tmpl1 and tmpl2 should not share variables.
-    for v, w in zip(v1, v3):
-      self.assertIsNot(v, w)
-
+    self.assertNotEqual(v1, v3)
     self.assertEqual("s1/nested/dummy:0", v1[0].name)
     self.assertEqual("s1/nested_1/dummy:0", v1[1].name)
     self.assertEqual("s1_1/nested/dummy:0", v3[0].name)
@@ -477,9 +465,9 @@ class TemplateTest(test.TestCase):
     outer_imm_var = tmpl_immed()
     outer_defer_var = tmpl_defer()
 
-    self.assertIsNot(inner_imm_var, inner_defer_var)
-    self.assertIs(outer_imm_var, inner_imm_var)
-    self.assertIs(outer_defer_var, inner_defer_var)
+    self.assertNotEqual(inner_imm_var, inner_defer_var)
+    self.assertEqual(outer_imm_var, inner_imm_var)
+    self.assertEqual(outer_defer_var, inner_defer_var)
 
     self.assertEqual("ctor_scope/a/dummy:0", inner_imm_var.name)
     self.assertEqual("call_scope/b/dummy:0", inner_defer_var.name)
@@ -590,36 +578,31 @@ class TemplateTest(test.TestCase):
     linear1 = make_linear_module(output_size=2, name="foo")
     outputs_a, w1 = linear1(inputs)
     outputs_b, _ = linear1(inputs)
-    self.assertEqual("foo", linear1.variable_scope.name)
-    self.assertEqual("foo/w:0", w1.name)
+    self.assertEquals("foo", linear1.variable_scope.name)
+    self.assertEquals("foo/w:0", w1.name)
     if not context.executing_eagerly():
-      self.assertEqual(
-          "foo/add:0", outputs_a.name,
-          "First application of template should get "
-          "same name scope as variables.")
-      self.assertEqual(
-          "foo_1/add:0", outputs_b.name,
-          "Second application of template should get "
-          "a freshly uniquified name scope.")
+      self.assertEquals("foo/add:0", outputs_a.name,
+                        "First application of template should get "
+                        "same name scope as variables.")
+      self.assertEquals("foo_1/add:0", outputs_b.name,
+                        "Second application of template should get "
+                        "a freshly uniquified name scope.")
 
     linear2 = make_linear_module(output_size=2, name="foo")
     outputs_c, w2 = linear2(inputs)
     outputs_d, _ = linear2(inputs)
-    self.assertEqual(
-        "foo_1", linear2.variable_scope.name,
-        "New template gets a freshly uniquified variable scope "
-        "because 'foo' is already taken.")
-    self.assertEqual("foo_1/w:0", w2.name)
+    self.assertEquals("foo_1", linear2.variable_scope.name,
+                      "New template gets a freshly uniquified variable scope "
+                      "because 'foo' is already taken.")
+    self.assertEquals("foo_1/w:0", w2.name)
     if not context.executing_eagerly():
-      self.assertEqual(
-          "foo_1_1/add:0", outputs_c.name,
-          "First application of template would get "
-          "same name scope as variables, but 'foo_1' is already "
-          "a name scope.")
-      self.assertEqual(
-          "foo_1_2/add:0", outputs_d.name,
-          "Second application of template should also get "
-          "a freshly uniquified name scope.")
+      self.assertEquals("foo_1_1/add:0", outputs_c.name,
+                        "First application of template would get "
+                        "same name scope as variables, but 'foo_1' is already "
+                        "a name scope.")
+      self.assertEquals("foo_1_2/add:0", outputs_d.name,
+                        "Second application of template should also get "
+                        "a freshly uniquified name scope.")
 
   @test_util.run_in_graph_and_eager_modes
   def test_global_variables(self):
@@ -692,7 +675,6 @@ class TemplateTest(test.TestCase):
     self.assertEqual(1, len(tb.variables))
 
   # TODO(apassos) handle local variables in Eager
-  @test_util.run_deprecated_v1
   def test_local_variables(self):
     # Make sure trainable_variables are created.
     with variable_scope.variable_scope("foo3"):
@@ -733,9 +715,7 @@ class TemplateTest(test.TestCase):
     tmpl()
     v2 = tmpl.variables
 
-    self.assertEqual(len(v1), len(v2))
-    for v, w in zip(v1, v2):
-      self.assertIs(v, w)
+    self.assertSequenceEqual(v1, v2)
     self.assertEqual("s1/test/dummy:0", v1[0].name)
 
 

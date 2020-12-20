@@ -1,4 +1,3 @@
 op {
   graph_op_name: "SetStatsAggregatorDataset"
-  visibility: HIDDEN
 }

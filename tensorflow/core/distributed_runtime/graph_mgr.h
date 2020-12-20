@@ -43,7 +43,7 @@ class ExecutorOpts;
 class StepStatsCollector;
 class RendezvousMgrInterface;
 class DeviceMgr;
-class WorkerSession;
+struct WorkerSession;
 
 // GraphMgr keeps track of a set of graphs that are registered with a
 // TensorFlow worker. Each registered graph is identified by a handle
@@ -69,17 +69,16 @@ class WorkerSession;
 //   EXPECT_EQ(out["c"], Tensor({4, 6}));
 class GraphMgr {
  public:
-  explicit GraphMgr(const WorkerEnv* worker_env, const DeviceMgr* device_mgr);
+  explicit GraphMgr(const WorkerEnv* worker_env, DeviceMgr* device_mgr);
   ~GraphMgr();
 
   // Registers a graph. Fills in "handle". The registered graph retains a
   // reference to cluster_flr to do cross process function calls.
-  Status Register(const string& handle, const GraphDef& gdef,
-                  WorkerSession* session, const GraphOptions& graph_options,
-                  const DebugOptions& debug_options,
-                  const ConfigProto& config_proto, int64 collective_graph_key,
+  Status Register(const string& session, const GraphDef& gdef,
+                  const GraphOptions& graph_options,
+                  const DebugOptions& debug_options, int64 collective_graph_key,
                   DistributedFunctionLibraryRuntime* cluster_flr,
-                  string* graph_handle);
+                  string* handle);
 
   // Executes one step of a registered graph "handle".
   //
@@ -109,7 +108,7 @@ class GraphMgr {
   typedef GraphMgr ME;
 
   struct ExecutionUnit {
-    std::unique_ptr<Graph> graph = nullptr;
+    Graph* graph = nullptr;                 // not owned.
     Device* device = nullptr;               // not owned.
     Executor* root = nullptr;               // not owned.
     FunctionLibraryRuntime* lib = nullptr;  // not owned.
@@ -145,13 +144,13 @@ class GraphMgr {
   };
 
   const WorkerEnv* worker_env_;  // Not owned.
-  const DeviceMgr* device_mgr_;
+  DeviceMgr* device_mgr_;
 
   CostModelManager cost_model_manager_;
 
   // Owned.
   mutex mu_;
-  int64 next_id_ TF_GUARDED_BY(mu_) = 0;
+  int64 next_id_ GUARDED_BY(mu_) = 0;
 
   // If true, blocks until device has finished all queued operations in a step.
   bool sync_on_finish_ = true;
@@ -169,7 +168,7 @@ class GraphMgr {
                               StepStatsCollector* collector,
                               CostGraphDef* cost_graph,
                               CancellationManager* cancellation_manager,
-                              WorkerSession* session, StatusCallback done);
+                              StatusCallback done);
 
   // Don't attempt to process cost models unless explicitly requested for at
   // least one of the items.
@@ -178,10 +177,9 @@ class GraphMgr {
   void BuildCostModel(Item* item, StepStatsCollector* collector,
                       CostGraphDef* cost_graph);
 
-  Status InitItem(const string& handle, const GraphDef& gdef,
-                  WorkerSession* session, const GraphOptions& graph_options,
-                  const DebugOptions& debug_options,
-                  const ConfigProto& config_proto, int64 collective_graph_key,
+  Status InitItem(const string& session, const GraphDef& gdef,
+                  const GraphOptions& graph_options,
+                  const DebugOptions& debug_options, int64 collective_graph_key,
                   DistributedFunctionLibraryRuntime* cluster_flr, Item* item);
 
   Status DecorateAndPublishGraphForDebug(const DebugOptions& debug_options,

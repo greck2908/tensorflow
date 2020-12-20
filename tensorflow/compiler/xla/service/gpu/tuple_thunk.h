@@ -34,10 +34,10 @@ namespace gpu {
 // issue (b/31336476).
 class TupleThunk : public Thunk {
  public:
-  TupleThunk(ThunkInfo thunk_info,
-             absl::Span<const BufferAllocation::Slice> tuple_element_buffers,
-             const BufferAllocation::Slice& dest_buffer)
-      : Thunk(Kind::kTuple, thunk_info),
+  TupleThunk(absl::Span<const BufferAllocation::Slice> tuple_element_buffers,
+             const BufferAllocation::Slice& dest_buffer,
+             const HloInstruction* hlo_instruction)
+      : Thunk(Kind::kTuple, hlo_instruction),
         tuple_element_buffers_(tuple_element_buffers.begin(),
                                tuple_element_buffers.end()),
         dest_buffer_(dest_buffer) {}
@@ -45,7 +45,9 @@ class TupleThunk : public Thunk {
   TupleThunk(const TupleThunk&) = delete;
   TupleThunk& operator=(const TupleThunk&) = delete;
 
-  Status ExecuteOnStream(const ExecuteParams& params) override;
+  Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                         se::Stream* stream,
+                         HloExecutionProfiler* profiler) override;
 
  private:
   const std::vector<BufferAllocation::Slice> tuple_element_buffers_;

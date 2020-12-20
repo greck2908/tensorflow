@@ -18,7 +18,6 @@ limitations under the License.
 
 #include "tensorflow/core/framework/tensor_types.h"
 #include "tensorflow/core/lib/random/random_distributions.h"
-#include "tensorflow/core/util/bcast.h"
 
 namespace tensorflow {
 
@@ -28,11 +27,11 @@ namespace functor {
 
 // Sample a truncated normal random variable, with mean, stddev, minval, and
 // maxval parameters for each batch. Uses two rejection sampling algorithms
-// described in http://rd.springer.com/article/10.1007/BF00143942 and a randn
-// rejection sampler when most of the normal is inside the bounds.
+// described in http://rd.springer.com/article/10.1007/BF00143942.
 //
 // Either minval may be -infinity, or maxval may be +infinity. If the interval
-// (minval, maxval) is empty, the result is NaN.
+// (minval, maxval) is empty, the result is NaN. Large intervals which include
+// both tails may have reduced accuracy.
 template <typename Device, typename T>
 struct TruncatedNormalFunctor {
   void operator()(OpKernelContext* ctx, const Device& d, int64 num_batches,
@@ -43,21 +42,8 @@ struct TruncatedNormalFunctor {
                   typename TTypes<T>::ConstFlat maxvals,
                   const random::PhiloxRandom& gen,
                   typename TTypes<T>::Flat output);
-};
 
-// This version supports broadcasting of the arguments, as well as puts
-// the sample dimension on the left.
-template <typename Device, typename T>
-struct TruncatedNormalFunctorV2 {
-  void operator()(OpKernelContext* ctx, const Device& d, int64 num_batches,
-                  int64 samples_per_batch, int64 num_elements,
-                  const BCastList<4>& bcast,
-                  typename TTypes<T>::ConstFlat means,
-                  typename TTypes<T>::ConstFlat stddevs,
-                  typename TTypes<T>::ConstFlat minvals,
-                  typename TTypes<T>::ConstFlat maxvals,
-                  const random::PhiloxRandom& gen,
-                  typename TTypes<T>::Flat output);
+  static const int kMaxIterations = 100;
 };
 
 }  // namespace functor

@@ -22,8 +22,12 @@ from __future__ import print_function
 import os.path
 import shutil
 import tempfile
+import threading
 import time
 
+from tensorflow.contrib.framework.python.framework import checkpoint_utils
+from tensorflow.contrib.framework.python.ops import variables
+from tensorflow.contrib.testing.python.framework import fake_summary_writer
 from tensorflow.python.client import session as session_lib
 from tensorflow.python.data.ops import dataset_ops
 from tensorflow.python.framework import constant_op
@@ -31,7 +35,6 @@ from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
 from tensorflow.python.framework import meta_graph
 from tensorflow.python.framework import ops
-from tensorflow.python.framework import test_util
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import control_flow_ops
 from tensorflow.python.ops import state_ops
@@ -42,18 +45,11 @@ from tensorflow.python.platform import gfile
 from tensorflow.python.platform import test
 from tensorflow.python.platform import tf_logging
 from tensorflow.python.summary import summary as summary_lib
-from tensorflow.python.summary.writer import fake_summary_writer
 from tensorflow.python.summary.writer import writer_cache
 from tensorflow.python.training import basic_session_run_hooks
-from tensorflow.python.training import checkpoint_utils
 from tensorflow.python.training import monitored_session
 from tensorflow.python.training import session_run_hook
 from tensorflow.python.training import training_util
-
-
-# Provide a realistic start time for unit tests where we need to mock out
-# calls to time.time().
-MOCK_START_TIME = 1484695987.209386
 
 
 class MockCheckpointSaverListener(
@@ -91,19 +87,15 @@ class MockCheckpointSaverListener(
 
 class SecondOrStepTimerTest(test.TestCase):
 
-  @test_util.run_deprecated_v1
   def test_raise_in_both_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.SecondOrStepTimer(every_secs=2.0, every_steps=10)
 
-  @test_util.run_deprecated_v1
   def test_raise_in_none_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.SecondOrStepTimer()
 
-  @test.mock.patch.object(time, 'time')
-  def test_every_secs(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_every_secs(self):
     timer = basic_session_run_hooks.SecondOrStepTimer(every_secs=1.0)
     self.assertTrue(timer.should_trigger_for_step(1))
 
@@ -111,7 +103,7 @@ class SecondOrStepTimerTest(test.TestCase):
     self.assertFalse(timer.should_trigger_for_step(1))
     self.assertFalse(timer.should_trigger_for_step(2))
 
-    mock_time.return_value += 1.0
+    time.sleep(1.0)
     self.assertFalse(timer.should_trigger_for_step(1))
     self.assertTrue(timer.should_trigger_for_step(2))
 
@@ -150,7 +142,7 @@ class StopAtStepTest(test.TestCase):
   def test_stop_based_on_last_step(self):
     h = basic_session_run_hooks.StopAtStepHook(last_step=10)
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       no_op = control_flow_ops.no_op()
       h.begin()
       with session_lib.Session() as sess:
@@ -174,7 +166,7 @@ class StopAtStepTest(test.TestCase):
     h = basic_session_run_hooks.StopAtStepHook(num_steps=10)
 
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       no_op = control_flow_ops.no_op()
       h.begin()
       with session_lib.Session() as sess:
@@ -201,7 +193,7 @@ class StopAtStepTest(test.TestCase):
     h = basic_session_run_hooks.StopAtStepHook(num_steps=10)
 
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       no_op = control_flow_ops.no_op()
       h.begin()
       with session_lib.Session() as sess:
@@ -233,14 +225,14 @@ class LoggingTensorHookTest(test.TestCase):
     tf_logging.info = self._actual_log
 
   def test_illegal_args(self):
-    with self.assertRaisesRegex(ValueError, 'nvalid every_n_iter'):
+    with self.assertRaisesRegexp(ValueError, 'nvalid every_n_iter'):
       basic_session_run_hooks.LoggingTensorHook(tensors=['t'], every_n_iter=0)
-    with self.assertRaisesRegex(ValueError, 'nvalid every_n_iter'):
+    with self.assertRaisesRegexp(ValueError, 'nvalid every_n_iter'):
       basic_session_run_hooks.LoggingTensorHook(tensors=['t'], every_n_iter=-10)
-    with self.assertRaisesRegex(ValueError, 'xactly one of'):
+    with self.assertRaisesRegexp(ValueError, 'xactly one of'):
       basic_session_run_hooks.LoggingTensorHook(
           tensors=['t'], every_n_iter=5, every_n_secs=5)
-    with self.assertRaisesRegex(ValueError, 'xactly one of'):
+    with self.assertRaisesRegexp(ValueError, 'xactly one of'):
       basic_session_run_hooks.LoggingTensorHook(tensors=['t'])
 
   def test_print_at_end_only(self):
@@ -251,7 +243,7 @@ class LoggingTensorHookTest(test.TestCase):
           tensors=[t.name], at_end=True)
       hook.begin()
       mon_sess = monitored_session._HookedSession(sess, [hook])
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       self.logged_message = ''
       for _ in range(3):
         mon_sess.run(train_op)
@@ -259,7 +251,7 @@ class LoggingTensorHookTest(test.TestCase):
         self.assertEqual(str(self.logged_message).find(t.name), -1)
 
       hook.end(sess)
-      self.assertRegex(str(self.logged_message), t.name)
+      self.assertRegexpMatches(str(self.logged_message), t.name)
 
   def _validate_print_every_n_steps(self, sess, at_end):
     t = constant_op.constant(42.0, name='foo')
@@ -269,9 +261,9 @@ class LoggingTensorHookTest(test.TestCase):
         tensors=[t.name], every_n_iter=10, at_end=at_end)
     hook.begin()
     mon_sess = monitored_session._HookedSession(sess, [hook])
-    self.evaluate(variables_lib.global_variables_initializer())
+    sess.run(variables_lib.global_variables_initializer())
     mon_sess.run(train_op)
-    self.assertRegex(str(self.logged_message), t.name)
+    self.assertRegexpMatches(str(self.logged_message), t.name)
     for _ in range(3):
       self.logged_message = ''
       for _ in range(9):
@@ -279,7 +271,7 @@ class LoggingTensorHookTest(test.TestCase):
         # assertNotRegexpMatches is not supported by python 3.1 and later
         self.assertEqual(str(self.logged_message).find(t.name), -1)
       mon_sess.run(train_op)
-      self.assertRegex(str(self.logged_message), t.name)
+      self.assertRegexpMatches(str(self.logged_message), t.name)
 
     # Add additional run to verify proper reset when called multiple times.
     self.logged_message = ''
@@ -290,7 +282,7 @@ class LoggingTensorHookTest(test.TestCase):
     self.logged_message = ''
     hook.end(sess)
     if at_end:
-      self.assertRegex(str(self.logged_message), t.name)
+      self.assertRegexpMatches(str(self.logged_message), t.name)
     else:
       # assertNotRegexpMatches is not supported by python 3.1 and later
       self.assertEqual(str(self.logged_message).find(t.name), -1)
@@ -316,13 +308,13 @@ class LoggingTensorHookTest(test.TestCase):
           tensors={'foo': t}, every_n_iter=1)
       hook.begin()
       mon_sess = monitored_session._HookedSession(sess, [hook])
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess.run(train_op)
-      self.assertRegex(str(self.logged_message), 'foo')
+      self.assertRegexpMatches(str(self.logged_message), 'foo')
       # in first run, elapsed time is None.
       self.assertEqual(str(self.logged_message).find('sec'), -1)
 
-  def _validate_print_every_n_secs(self, sess, at_end, mock_time):
+  def _validate_print_every_n_secs(self, sess, at_end):
     t = constant_op.constant(42.0, name='foo')
     train_op = constant_op.constant(3)
 
@@ -330,44 +322,40 @@ class LoggingTensorHookTest(test.TestCase):
         tensors=[t.name], every_n_secs=1.0, at_end=at_end)
     hook.begin()
     mon_sess = monitored_session._HookedSession(sess, [hook])
-    self.evaluate(variables_lib.global_variables_initializer())
+    sess.run(variables_lib.global_variables_initializer())
 
     mon_sess.run(train_op)
-    self.assertRegex(str(self.logged_message), t.name)
+    self.assertRegexpMatches(str(self.logged_message), t.name)
 
     # assertNotRegexpMatches is not supported by python 3.1 and later
     self.logged_message = ''
     mon_sess.run(train_op)
     self.assertEqual(str(self.logged_message).find(t.name), -1)
-    mock_time.return_value += 1.0
+    time.sleep(1.0)
 
     self.logged_message = ''
     mon_sess.run(train_op)
-    self.assertRegex(str(self.logged_message), t.name)
+    self.assertRegexpMatches(str(self.logged_message), t.name)
 
     self.logged_message = ''
     hook.end(sess)
     if at_end:
-      self.assertRegex(str(self.logged_message), t.name)
+      self.assertRegexpMatches(str(self.logged_message), t.name)
     else:
       # assertNotRegexpMatches is not supported by python 3.1 and later
       self.assertEqual(str(self.logged_message).find(t.name), -1)
 
-  @test.mock.patch.object(time, 'time')
-  def test_print_every_n_secs(self, mock_time):
+  def test_print_every_n_secs(self):
     with ops.Graph().as_default(), session_lib.Session() as sess:
-      mock_time.return_value = MOCK_START_TIME
-      self._validate_print_every_n_secs(sess, at_end=False, mock_time=mock_time)
+      self._validate_print_every_n_secs(sess, at_end=False)
       # Verify proper reset.
-      self._validate_print_every_n_secs(sess, at_end=False, mock_time=mock_time)
+      self._validate_print_every_n_secs(sess, at_end=False)
 
-  @test.mock.patch.object(time, 'time')
-  def test_print_every_n_secs_and_end(self, mock_time):
+  def test_print_every_n_secs_and_end(self):
     with ops.Graph().as_default(), session_lib.Session() as sess:
-      mock_time.return_value = MOCK_START_TIME
-      self._validate_print_every_n_secs(sess, at_end=True, mock_time=mock_time)
+      self._validate_print_every_n_secs(sess, at_end=True)
       # Verify proper reset.
-      self._validate_print_every_n_secs(sess, at_end=True, mock_time=mock_time)
+      self._validate_print_every_n_secs(sess, at_end=True)
 
   def test_print_formatter(self):
     with ops.Graph().as_default(), session_lib.Session() as sess:
@@ -378,7 +366,7 @@ class LoggingTensorHookTest(test.TestCase):
           formatter=lambda items: 'qqq=%s' % items[t.name])
       hook.begin()
       mon_sess = monitored_session._HookedSession(sess, [hook])
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess.run(train_op)
       self.assertEqual(self.logged_message[0], 'qqq=42.0')
 
@@ -390,7 +378,7 @@ class CheckpointSaverHookTest(test.TestCase):
     self.graph = ops.Graph()
     with self.graph.as_default():
       self.scaffold = monitored_session.Scaffold()
-      self.global_step = training_util.get_or_create_global_step()
+      self.global_step = variables.get_or_create_global_step()
       self.train_op = training_util._increment_global_step(1)
 
   def tearDown(self):
@@ -415,13 +403,11 @@ class CheckpointSaverHookTest(test.TestCase):
       basic_session_run_hooks.CheckpointSaverHook(
           self.model_dir, saver=self.scaffold.saver, scaffold=self.scaffold)
 
-  @test_util.run_deprecated_v1
   def test_raise_in_both_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.CheckpointSaverHook(
           self.model_dir, save_secs=10, save_steps=20)
 
-  @test_util.run_deprecated_v1
   def test_raise_in_none_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.CheckpointSaverHook(self.model_dir)
@@ -466,7 +452,7 @@ class CheckpointSaverHookTest(test.TestCase):
   def test_listener_with_monitored_session(self):
     with ops.Graph().as_default():
       scaffold = monitored_session.Scaffold()
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       listener = MockCheckpointSaverListener()
       hook = basic_session_run_hooks.CheckpointSaverHook(
@@ -493,7 +479,7 @@ class CheckpointSaverHookTest(test.TestCase):
   def test_listener_stops_training_in_after_save(self):
     with ops.Graph().as_default():
       scaffold = monitored_session.Scaffold()
-      training_util.get_or_create_global_step()
+      variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       listener = MockCheckpointSaverListener()
       hook = basic_session_run_hooks.CheckpointSaverHook(
@@ -511,7 +497,7 @@ class CheckpointSaverHookTest(test.TestCase):
 
   def test_listener_with_default_saver(self):
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       listener = MockCheckpointSaverListener()
       hook = basic_session_run_hooks.CheckpointSaverHook(
@@ -534,7 +520,7 @@ class CheckpointSaverHookTest(test.TestCase):
     }, listener_counts)
 
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       with monitored_session.SingularMonitoredSession(
           checkpoint_dir=self.model_dir) as sess2:
         global_step_saved_val = sess2.run(global_step)
@@ -542,7 +528,7 @@ class CheckpointSaverHookTest(test.TestCase):
 
   def test_two_listeners_with_default_saver(self):
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       listener1 = MockCheckpointSaverListener()
       listener2 = MockCheckpointSaverListener()
@@ -568,7 +554,7 @@ class CheckpointSaverHookTest(test.TestCase):
     self.assertEqual(listener1_counts, listener2_counts)
 
     with ops.Graph().as_default():
-      global_step = training_util.get_or_create_global_step()
+      global_step = variables.get_or_create_global_step()
       with monitored_session.SingularMonitoredSession(
           checkpoint_dir=self.model_dir) as sess2:
         global_step_saved_val = sess2.run(global_step)
@@ -576,8 +562,11 @@ class CheckpointSaverHookTest(test.TestCase):
 
   @test.mock.patch.object(time, 'time')
   def test_save_secs_saves_periodically(self, mock_time):
+    # Let's have a realistic start time
+    current_time = 1484695987.209386
+
     with self.graph.as_default():
-      mock_time.return_value = MOCK_START_TIME
+      mock_time.return_value = current_time
       hook = basic_session_run_hooks.CheckpointSaverHook(
           self.model_dir, save_secs=2, scaffold=self.scaffold)
       hook.begin()
@@ -587,10 +576,10 @@ class CheckpointSaverHookTest(test.TestCase):
         sess.run(self.scaffold.init_op)
         mon_sess = monitored_session._HookedSession(sess, [hook])
 
-        mock_time.return_value = MOCK_START_TIME
+        mock_time.return_value = current_time
         mon_sess.run(self.train_op)  # Saved.
 
-        mock_time.return_value = MOCK_START_TIME + 0.5
+        mock_time.return_value = current_time + 0.5
         mon_sess.run(self.train_op)  # Not saved.
 
         self.assertEqual(1,
@@ -598,13 +587,13 @@ class CheckpointSaverHookTest(test.TestCase):
                                                         self.global_step.name))
 
         # Simulate 2.5 seconds of sleep.
-        mock_time.return_value = MOCK_START_TIME + 2.5
+        mock_time.return_value = current_time + 2.5
         mon_sess.run(self.train_op)  # Saved.
 
-        mock_time.return_value = MOCK_START_TIME + 2.6
+        mock_time.return_value = current_time + 2.6
         mon_sess.run(self.train_op)  # Not saved.
 
-        mock_time.return_value = MOCK_START_TIME + 2.7
+        mock_time.return_value = current_time + 2.7
         mon_sess.run(self.train_op)  # Not saved.
 
         self.assertEqual(3,
@@ -612,7 +601,7 @@ class CheckpointSaverHookTest(test.TestCase):
                                                         self.global_step.name))
 
         # Simulate 7.5 more seconds of sleep (10 seconds from start.
-        mock_time.return_value = MOCK_START_TIME + 10
+        mock_time.return_value = current_time + 10
         mon_sess.run(self.train_op)  # Saved.
         self.assertEqual(6,
                          checkpoint_utils.load_variable(self.model_dir,
@@ -620,8 +609,11 @@ class CheckpointSaverHookTest(test.TestCase):
 
   @test.mock.patch.object(time, 'time')
   def test_save_secs_calls_listeners_periodically(self, mock_time):
+    # Let's have a realistic start time
+    current_time = 1484695987.209386
+
     with self.graph.as_default():
-      mock_time.return_value = MOCK_START_TIME
+      mock_time.return_value = current_time
       listener = MockCheckpointSaverListener()
       hook = basic_session_run_hooks.CheckpointSaverHook(
           self.model_dir,
@@ -634,28 +626,28 @@ class CheckpointSaverHookTest(test.TestCase):
         sess.run(self.scaffold.init_op)
         mon_sess = monitored_session._HookedSession(sess, [hook])
 
-        mock_time.return_value = MOCK_START_TIME + 0.5
+        mock_time.return_value = current_time + 0.5
         mon_sess.run(self.train_op)  # hook runs here
 
-        mock_time.return_value = MOCK_START_TIME + 0.5
+        mock_time.return_value = current_time + 0.5
         mon_sess.run(self.train_op)
 
-        mock_time.return_value = MOCK_START_TIME + 3.0
+        mock_time.return_value = current_time + 3.0
         mon_sess.run(self.train_op)  # hook runs here
 
-        mock_time.return_value = MOCK_START_TIME + 3.5
+        mock_time.return_value = current_time + 3.5
         mon_sess.run(self.train_op)
 
-        mock_time.return_value = MOCK_START_TIME + 4.0
+        mock_time.return_value = current_time + 4.0
         mon_sess.run(self.train_op)
 
-        mock_time.return_value = MOCK_START_TIME + 6.5
+        mock_time.return_value = current_time + 6.5
         mon_sess.run(self.train_op)  # hook runs here
 
-        mock_time.return_value = MOCK_START_TIME + 7.0
+        mock_time.return_value = current_time + 7.0
         mon_sess.run(self.train_op)  # hook won't run here, so it does at end
 
-        mock_time.return_value = MOCK_START_TIME + 7.5
+        mock_time.return_value = current_time + 7.5
         hook.end(sess)  # hook runs here
       self.assertEqual({
           'begin': 1,
@@ -776,48 +768,6 @@ class CheckpointSaverHookTest(test.TestCase):
                          checkpoint_utils.load_variable(self.model_dir,
                                                         self.global_step.name))
 
-  def test_save_graph_def(self):
-    with self.graph.as_default():
-      hook = basic_session_run_hooks.CheckpointSaverHook(
-          self.model_dir, save_steps=1, scaffold=self.scaffold,
-          save_graph_def=True)
-      hook.begin()
-      self.scaffold.finalize()
-      with session_lib.Session() as sess:
-        sess.run(self.scaffold.init_op)
-        mon_sess = monitored_session._HookedSession(sess, [hook])
-        sess.run(self.scaffold.init_op)
-        hook.after_create_session(sess, None)
-
-        self.assertIn('graph.pbtxt', os.listdir(self.model_dir))
-        # Should have a single .meta file for step 0
-        self.assertLen(gfile.Glob(os.path.join(self.model_dir, '*.meta')), 1)
-
-        mon_sess.run(self.train_op)
-        self.assertLen(gfile.Glob(os.path.join(self.model_dir, '*.meta')), 2)
-
-  def test_save_graph_def_false(self):
-    with self.graph.as_default():
-      hook = basic_session_run_hooks.CheckpointSaverHook(
-          self.model_dir, save_steps=1, scaffold=self.scaffold,
-          save_graph_def=False)
-      hook.begin()
-      self.scaffold.finalize()
-      with session_lib.Session() as sess:
-        sess.run(self.scaffold.init_op)
-        mon_sess = monitored_session._HookedSession(sess, [hook])
-        sess.run(self.scaffold.init_op)
-        hook.after_create_session(sess, None)
-
-        self.assertNotIn('graph.pbtxt', os.listdir(self.model_dir))
-        # Should have a single .meta file for step 0
-        self.assertEmpty(gfile.Glob(os.path.join(self.model_dir, '*.meta')))
-
-        mon_sess.run(self.train_op)
-        self.assertEmpty(gfile.Glob(os.path.join(self.model_dir, '*.meta')))
-
-
-
 
 class CheckpointSaverHookMultiStepTest(test.TestCase):
 
@@ -827,7 +777,7 @@ class CheckpointSaverHookMultiStepTest(test.TestCase):
     self.steps_per_run = 5
     with self.graph.as_default():
       self.scaffold = monitored_session.Scaffold()
-      self.global_step = training_util.get_or_create_global_step()
+      self.global_step = variables.get_or_create_global_step()
       self.train_op = training_util._increment_global_step(self.steps_per_run)
 
   def tearDown(self):
@@ -963,21 +913,19 @@ class StepCounterHookTest(test.TestCase):
   def tearDown(self):
     shutil.rmtree(self.log_dir, ignore_errors=True)
 
-  @test.mock.patch.object(time, 'time')
-  def test_step_counter_every_n_steps(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_step_counter_every_n_steps(self):
     with ops.Graph().as_default() as g, session_lib.Session() as sess:
-      training_util.get_or_create_global_step()
+      variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       summary_writer = fake_summary_writer.FakeSummaryWriter(self.log_dir, g)
       hook = basic_session_run_hooks.StepCounterHook(
           summary_writer=summary_writer, every_n_steps=10)
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       with test.mock.patch.object(tf_logging, 'warning') as mock_log:
         for _ in range(30):
-          mock_time.return_value += 0.01
+          time.sleep(0.01)
           mon_sess.run(train_op)
         # logging.warning should not be called.
         self.assertIsNone(mock_log.call_args)
@@ -993,23 +941,21 @@ class StepCounterHookTest(test.TestCase):
         self.assertEqual('global_step/sec', summary_value.tag)
         self.assertGreater(summary_value.simple_value, 0)
 
-  @test.mock.patch.object(time, 'time')
-  def test_step_counter_every_n_secs(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_step_counter_every_n_secs(self):
     with ops.Graph().as_default() as g, session_lib.Session() as sess:
-      training_util.get_or_create_global_step()
+      variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(1)
       summary_writer = fake_summary_writer.FakeSummaryWriter(self.log_dir, g)
       hook = basic_session_run_hooks.StepCounterHook(
           summary_writer=summary_writer, every_n_steps=None, every_n_secs=0.1)
 
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       mon_sess.run(train_op)
-      mock_time.return_value += 0.2
+      time.sleep(0.2)
       mon_sess.run(train_op)
-      mock_time.return_value += 0.2
+      time.sleep(0.2)
       mon_sess.run(train_op)
       hook.end(sess)
 
@@ -1041,7 +987,7 @@ class StepCounterHookTest(test.TestCase):
           summary_writer=summary_writer, every_n_steps=1, every_n_secs=None)
 
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       mon_sess.run(train_op)
       mon_sess.run(train_op)
@@ -1059,19 +1005,20 @@ class StepCounterHookTest(test.TestCase):
 
   def test_log_warning_if_global_step_not_increased(self):
     with ops.Graph().as_default(), session_lib.Session() as sess:
-      training_util.get_or_create_global_step()
+      variables.get_or_create_global_step()
       train_op = training_util._increment_global_step(0)  # keep same.
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       hook = basic_session_run_hooks.StepCounterHook(
           every_n_steps=1, every_n_secs=None)
       hook.begin()
       mon_sess = monitored_session._HookedSession(sess, [hook])
       mon_sess.run(train_op)  # Run one step to record global step.
-      with test.mock.patch.object(tf_logging, 'log_first_n') as mock_log:
+      with test.mock.patch.object(tf_logging, 'warning') as mock_log:
         for _ in range(30):
           mon_sess.run(train_op)
-        self.assertRegex(
-            str(mock_log.call_args), 'global step.*has not been increased')
+        self.assertRegexpMatches(
+            str(mock_log.call_args),
+            'global step.*has not been increased')
       hook.end(sess)
 
   def _setup_steps_per_run_test(self,
@@ -1079,7 +1026,7 @@ class StepCounterHookTest(test.TestCase):
                                 steps_per_run,
                                 graph,
                                 sess):
-    training_util.get_or_create_global_step()
+    variables.get_or_create_global_step()
     self.train_op = training_util._increment_global_step(steps_per_run)
     self.summary_writer = fake_summary_writer.FakeSummaryWriter(
         self.log_dir, graph)
@@ -1087,18 +1034,16 @@ class StepCounterHookTest(test.TestCase):
         summary_writer=self.summary_writer, every_n_steps=every_n_steps)
     self.hook._set_steps_per_run(steps_per_run)
     self.hook.begin()
-    self.evaluate(variables_lib.global_variables_initializer())
+    sess.run(variables_lib.global_variables_initializer())
     self.mon_sess = monitored_session._HookedSession(sess, [self.hook])
 
-  @test.mock.patch.object(time, 'time')
-  def test_steps_per_run_less_than_every_n_steps(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_steps_per_run_less_than_every_n_steps(self):
     with ops.Graph().as_default() as g, session_lib.Session() as sess:
       self._setup_steps_per_run_test(10, 5, g, sess)
 
       # Logs at 15, 25
       for _ in range(5):
-        mock_time.return_value += 0.01
+        time.sleep(0.01)
         self.mon_sess.run(self.train_op)
 
       self.hook.end(sess)
@@ -1113,15 +1058,13 @@ class StepCounterHookTest(test.TestCase):
         self.assertEqual('global_step/sec', summary_value.tag)
         self.assertGreater(summary_value.simple_value, 0)
 
-  @test.mock.patch.object(time, 'time')
-  def test_steps_per_run_equal_every_n_steps(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_steps_per_run_equal_every_n_steps(self):
     with ops.Graph().as_default() as g, session_lib.Session() as sess:
       self._setup_steps_per_run_test(5, 5, g, sess)
 
       # Logs at 10, 15, 20, 25
       for _ in range(5):
-        mock_time.return_value += 0.01
+        time.sleep(0.01)
         self.mon_sess.run(self.train_op)
 
       self.hook.end(sess)
@@ -1137,15 +1080,13 @@ class StepCounterHookTest(test.TestCase):
         self.assertEqual('global_step/sec', summary_value.tag)
         self.assertGreater(summary_value.simple_value, 0)
 
-  @test.mock.patch.object(time, 'time')
-  def test_steps_per_run_greater_than_every_n_steps(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_steps_per_run_greater_than_every_n_steps(self):
     with ops.Graph().as_default() as g, session_lib.Session() as sess:
       self._setup_steps_per_run_test(5, 10, g, sess)
 
       # Logs at 20, 30, 40, 50
       for _ in range(5):
-        mock_time.return_value += 0.01
+        time.sleep(0.01)
         self.mon_sess.run(self.train_op)
 
       self.hook.end(sess)
@@ -1162,7 +1103,6 @@ class StepCounterHookTest(test.TestCase):
         self.assertGreater(summary_value.simple_value, 0)
 
 
-@test_util.run_deprecated_v1
 class SummarySaverHookTest(test.TestCase):
 
   def setUp(self):
@@ -1177,7 +1117,7 @@ class SummarySaverHookTest(test.TestCase):
     self.summary_op = summary_lib.scalar('my_summary', tensor)
     self.summary_op2 = summary_lib.scalar('my_summary2', tensor2)
 
-    training_util.get_or_create_global_step()
+    variables.get_or_create_global_step()
     self.train_op = training_util._increment_global_step(1)
 
   def test_raise_when_scaffold_and_summary_op_both_missing(self):
@@ -1207,7 +1147,7 @@ class SummarySaverHookTest(test.TestCase):
 
     with self.cached_session() as sess:
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       for _ in range(30):
         mon_sess.run(self.train_op)
@@ -1239,7 +1179,7 @@ class SummarySaverHookTest(test.TestCase):
 
     with self.cached_session() as sess:
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       for _ in range(10):
         mon_sess.run(self.train_op)
@@ -1259,9 +1199,7 @@ class SummarySaverHookTest(test.TestCase):
             },
         })
 
-  @test.mock.patch.object(time, 'time')
-  def test_save_secs_saving_once_every_step(self, mock_time):
-    mock_time.return_value = MOCK_START_TIME
+  def test_save_secs_saving_once_every_step(self):
     hook = basic_session_run_hooks.SummarySaverHook(
         save_secs=0.5,
         summary_writer=self.summary_writer,
@@ -1269,11 +1207,11 @@ class SummarySaverHookTest(test.TestCase):
 
     with self.cached_session() as sess:
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       for _ in range(4):
         mon_sess.run(self.train_op)
-        mock_time.return_value += 0.5
+        time.sleep(0.5)
       hook.end(sess)
 
     self.summary_writer.assert_summaries(
@@ -1304,7 +1242,7 @@ class SummarySaverHookTest(test.TestCase):
 
     with self.cached_session() as sess:
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       for _ in range(8):
         mon_sess.run(self.train_op)
@@ -1332,7 +1270,7 @@ class GlobalStepWaiterHookTest(test.TestCase):
 
   def test_not_wait_for_step_zero(self):
     with ops.Graph().as_default():
-      training_util.get_or_create_global_step()
+      variables.get_or_create_global_step()
       hook = basic_session_run_hooks.GlobalStepWaiterHook(wait_until_step=0)
       hook.begin()
       with session_lib.Session() as sess:
@@ -1341,43 +1279,27 @@ class GlobalStepWaiterHookTest(test.TestCase):
             session_run_hook.SessionRunContext(
                 original_args=None, session=sess))
 
-  @test.mock.patch.object(time, 'sleep')
-  def test_wait_for_step(self, mock_sleep):
+  def test_wait_for_step(self):
     with ops.Graph().as_default():
-      gstep = training_util.get_or_create_global_step()
+      gstep = variables.get_or_create_global_step()
       hook = basic_session_run_hooks.GlobalStepWaiterHook(wait_until_step=1000)
       hook.begin()
-
       with session_lib.Session() as sess:
-        # Mock out calls to time.sleep() to update the global step.
-
-        class Context(object):
-          counter = 0
-
-        def mock_sleep_side_effect(seconds):
-          del seconds  # argument is ignored
-          Context.counter += 1
-          if Context.counter == 1:
-            # The first time sleep() is called, we update the global_step from
-            # 0 to 500.
-            sess.run(state_ops.assign(gstep, 500))
-          elif Context.counter == 2:
-            # The second time sleep() is called, we update the global_step from
-            # 500 to 1100.
-            sess.run(state_ops.assign(gstep, 1100))
-          else:
-            raise AssertionError(
-                'Expected before_run() to terminate after the second call to '
-                'time.sleep()')
-
-        mock_sleep.side_effect = mock_sleep_side_effect
-
-        # Run the mocked-out interaction with the hook.
-        self.evaluate(variables_lib.global_variables_initializer())
-        run_context = session_run_hook.SessionRunContext(
-            original_args=None, session=sess)
-        hook.before_run(run_context)
-        self.assertEqual(Context.counter, 2)
+        sess.run(variables_lib.global_variables_initializer())
+        waiter = threading.Thread(
+            target=hook.before_run,
+            args=(session_run_hook.SessionRunContext(
+                original_args=None, session=sess),))
+        waiter.daemon = True
+        waiter.start()
+        time.sleep(1.0)
+        self.assertTrue(waiter.is_alive())
+        sess.run(state_ops.assign(gstep, 500))
+        time.sleep(1.0)
+        self.assertTrue(waiter.is_alive())
+        sess.run(state_ops.assign(gstep, 1100))
+        time.sleep(1.2)
+        self.assertFalse(waiter.is_alive())
 
 
 class FinalOpsHookTest(test.TestCase):
@@ -1411,7 +1333,7 @@ class FinalOpsHookTest(test.TestCase):
   def test_final_ops_triggers_out_of_range_error(self):
     with ops.Graph().as_default():
       dataset = dataset_ops.Dataset.range(1)
-      iterator = dataset_ops.make_one_shot_iterator(dataset)
+      iterator = dataset.make_one_shot_iterator()
       read_ops = iterator.get_next()
       final_ops = read_ops
 
@@ -1421,11 +1343,12 @@ class FinalOpsHookTest(test.TestCase):
       with session_lib.Session() as session:
         session.run(read_ops)
         with test.mock.patch.object(tf_logging, 'warning') as mock_log:
-          with self.assertRaisesRegex(errors.OutOfRangeError,
-                                      'End of sequence'):
+          with self.assertRaisesRegexp(errors.OutOfRangeError,
+                                       'End of sequence'):
             hook.end(session)
-          self.assertRegex(
-              str(mock_log.call_args), 'dependency back to some input source')
+          self.assertRegexpMatches(
+              str(mock_log.call_args),
+              'dependency back to some input source')
 
   def test_final_ops_with_dictionary(self):
     with ops.Graph().as_default():
@@ -1443,7 +1366,6 @@ class FinalOpsHookTest(test.TestCase):
                              hook.final_ops_values.tolist())
 
 
-@test_util.run_deprecated_v1
 class ResourceSummarySaverHookTest(test.TestCase):
 
   def setUp(self):
@@ -1457,7 +1379,7 @@ class ResourceSummarySaverHookTest(test.TestCase):
     self.summary_op = summary_lib.scalar('my_summary', tensor)
 
     with variable_scope.variable_scope('foo', use_resource=True):
-      training_util.create_global_step()
+      variables.create_global_step()
     self.train_op = training_util._increment_global_step(1)
 
   def test_save_steps(self):
@@ -1468,7 +1390,7 @@ class ResourceSummarySaverHookTest(test.TestCase):
 
     with self.cached_session() as sess:
       hook.begin()
-      self.evaluate(variables_lib.global_variables_initializer())
+      sess.run(variables_lib.global_variables_initializer())
       mon_sess = monitored_session._HookedSession(sess, [hook])
       for _ in range(30):
         mon_sess.run(self.train_op)
@@ -1514,7 +1436,7 @@ class ProfilerHookTest(test.TestCase):
     self.graph = ops.Graph()
     self.filepattern = os.path.join(self.output_dir, 'timeline-*.json')
     with self.graph.as_default():
-      self.global_step = training_util.get_or_create_global_step()
+      self.global_step = variables.get_or_create_global_step()
       self.train_op = state_ops.assign_add(self.global_step, 1)
 
   def tearDown(self):
@@ -1524,12 +1446,10 @@ class ProfilerHookTest(test.TestCase):
   def _count_timeline_files(self):
     return len(gfile.Glob(self.filepattern))
 
-  @test_util.run_deprecated_v1
   def test_raise_in_both_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.ProfilerHook(save_secs=10, save_steps=20)
 
-  @test_util.run_deprecated_v1
   def test_raise_in_none_secs_and_steps(self):
     with self.assertRaises(ValueError):
       basic_session_run_hooks.ProfilerHook(save_secs=None, save_steps=None)
@@ -1545,27 +1465,29 @@ class ProfilerHookTest(test.TestCase):
   @test.mock.patch.object(time, 'time')
   def test_save_secs_saves_periodically(self, mock_time):
     # Pick a fixed start time.
+    current_time = 1484863632.
+
     with self.graph.as_default():
-      mock_time.return_value = MOCK_START_TIME
+      mock_time.return_value = current_time
       hook = basic_session_run_hooks.ProfilerHook(
           save_secs=2, output_dir=self.output_dir)
       with monitored_session.SingularMonitoredSession(hooks=[hook]) as sess:
         sess.run(self.train_op)  # Not saved.
         self.assertEqual(0, self._count_timeline_files())
         # Simulate 2.5 seconds of sleep.
-        mock_time.return_value = MOCK_START_TIME + 2.5
+        mock_time.return_value = current_time + 2.5
         sess.run(self.train_op)  # Saved.
         self.assertEqual(1, self._count_timeline_files())
 
         # Pretend some small amount of time has passed.
-        mock_time.return_value = MOCK_START_TIME + 2.6
+        mock_time.return_value = current_time + 2.6
         sess.run(self.train_op)  # Not saved.
         # Edge test just before we should save the timeline.
-        mock_time.return_value = MOCK_START_TIME + 4.4
+        mock_time.return_value = current_time + 4.4
         sess.run(self.train_op)  # Not saved.
         self.assertEqual(1, self._count_timeline_files())
 
-        mock_time.return_value = MOCK_START_TIME + 4.5
+        mock_time.return_value = current_time + 4.5
         sess.run(self.train_op)  # Saved.
         self.assertEqual(2, self._count_timeline_files())
 

@@ -4,12 +4,17 @@
 
 package(default_visibility = [
     "//tensorflow/java:__pkg__",
-    "//tensorflow/tools/android/inference_interface:__pkg__",
+    # TODO(ashankar): Temporary hack for the Java API and
+    # //third_party/tensorflow/contrib/android:android_tensorflow_inference_jni
+    # to co-exist in a single shared library. However, the hope is that
+    # //third_party/tensorflow/contrib/android:android_tensorflow_jni can be
+    # removed once the Java API provides feature parity with it.
+    "//tensorflow/contrib/android:__pkg__",
 ])
 
 licenses(["notice"])  # Apache 2.0
 
-load("//tensorflow:tensorflow.bzl", "tf_copts", "tf_cuda_library")
+load("//tensorflow:tensorflow.bzl", "tf_cuda_library", "tf_copts")
 
 tf_cuda_library(
     name = "native",
@@ -28,13 +33,13 @@ tf_cuda_library(
         "//tensorflow:android": [],
         "//conditions:default": ["."],
     }),
-    deps = select({
+    deps = [
+        "//tensorflow/c:c_api",
+    ] + select({
         "//tensorflow:android": [
-            "//tensorflow/core:portable_tensorflow_lib",
+            "//tensorflow/core:android_tensorflow_lib",
         ],
         "//conditions:default": [
-            "//tensorflow/c:c_api",
-            "//tensorflow/c/eager:c_api",
             "//tensorflow/core:all_kernels",
             "//tensorflow/core:direct_session",
             "//tensorflow/core:ops",
@@ -63,7 +68,7 @@ genrule(
     name = "copy_jni_md_h",
     srcs = select({
         "//tensorflow:windows": ["@bazel_tools//tools/jdk:jni_md_header-windows"],
-        "//tensorflow:macos": ["@bazel_tools//tools/jdk:jni_md_header-darwin"],
+        "//tensorflow:darwin": ["@bazel_tools//tools/jdk:jni_md_header-darwin"],
         "//conditions:default": ["@bazel_tools//tools/jdk:jni_md_header-linux"],
     }),
     outs = ["jni_md.h"],

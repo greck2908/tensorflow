@@ -42,7 +42,6 @@ class SplitOpTest(test.TestCase):
       data -= 1j * data
     return data
 
-  @test_util.run_deprecated_v1
   def testShapeInference(self):
     model_input = array_ops.placeholder(dtypes.float32, shape=(1, 10))
 
@@ -59,17 +58,17 @@ class SplitOpTest(test.TestCase):
       with self.assertRaises(errors_impl.InvalidArgumentError):
         sess.run(array_ops.split(model_input, [4]), {model_input: inp})
 
-    # scalar Tensors are not permitted as num_splits
+    # test that we can pass a scalar Tensor as num_splits
     for axis in [0, -2]:
       with self.cached_session(use_gpu=True) as sess:
-        with self.assertRaises(ValueError):
-          # pylint: disable=expression-not-assigned
-          sess.run(
-              array_ops.split(
-                  array_ops.ones([4, 4]),
-                  num_or_size_splits=constant_op.constant(2),
-                  axis=axis))
-          # pylint: enable=expression-not-assigned
+        result = sess.run(
+            array_ops.split(
+                array_ops.ones([4, 4]),
+                num_or_size_splits=array_ops.ones([2, 2]).get_shape()[1],
+                axis=axis))
+
+      self.assertEqual(result[0].shape, (2, 4))
+      self.assertEqual(result[1].shape, (2, 4))
 
     # test that none split dimensions remain, even if we don't know how
     # the split_dim will be split, but we do know the axis
@@ -86,7 +85,6 @@ class SplitOpTest(test.TestCase):
     with self.cached_session(use_gpu=True) as sess:
       sess.run(result, feed_dict={model_input2: np.ones([4, 2])})
 
-  @test_util.run_deprecated_v1
   def testFailWithoutExplicitNum(self):
     size_splits = array_ops.placeholder(dtype=dtypes.int32, shape=[None])
 
@@ -113,8 +111,8 @@ class SplitOpTest(test.TestCase):
 
   @test_util.run_in_graph_and_eager_modes
   def testListOfScalarTensors(self):
-    a = math_ops.cast(5, dtypes.int32)
-    b = math_ops.cast(6, dtypes.int32)
+    a = math_ops.to_int32(5)
+    b = math_ops.to_int32(6)
 
     value = np.random.rand(11, 11)
 
@@ -211,7 +209,6 @@ class SplitOpTest(test.TestCase):
     self.assertAllEqual(result[:, 0:1], inp_grads[0])
     self.assertAllEqual(result[:, 1:4], inp_grads[1])
 
-  @test_util.run_deprecated_v1
   def testOutputShape(self):
     for axis in [1, -1]:
       with self.cached_session(use_gpu=True):
@@ -321,17 +318,15 @@ class SplitOpTest(test.TestCase):
       inp_grads = [self._makeData((4, 1), dtype)for _ in range(4)]
       grad_tensors = [constant_op.constant(x) for x in inp_grads]
       grad = gradients_impl.gradients(s, [inp_tensor], grad_tensors)[0]
-      result = self.evaluate(grad)
+      result = grad.eval()
     for i in range(4):
       self.assertAllEqual(result[:, i:i + 1], inp_grads[i])
 
-  @test_util.run_deprecated_v1
   def testGradientsAll(self):
     for dtype in _TEST_DTYPES:
       self._testGradientsSimple(dtype)
       self._testGradientsSimpleVariable(dtype)
 
-  @test_util.run_deprecated_v1
   def testShapeFunctionEdgeCases(self):
     # split_dim greater than rank of input.
     with self.assertRaises(ValueError):
@@ -342,7 +337,7 @@ class SplitOpTest(test.TestCase):
       array_ops.split(value=[[0, 1], [2, 3]], num_or_size_splits=4, axis=-3)
 
     # num_split does not evenly divide the size in split_dim.
-    with self.assertRaisesRegex(ValueError, "should evenly divide"):
+    with self.assertRaisesRegexp(ValueError, "should evenly divide"):
       array_ops.split(value=[0, 1, 2, 3], num_or_size_splits=3, axis=0)
 
     # Unknown split_dim.
@@ -361,7 +356,6 @@ class SplitOpTest(test.TestCase):
     for s in splits:
       self.assertEqual(None, s.get_shape().ndims)
 
-  @test_util.run_deprecated_v1
   def testVariableShapeFunction(self):
     # size_splits too big
     with self.assertRaises(ValueError):
@@ -372,19 +366,18 @@ class SplitOpTest(test.TestCase):
     assert s0.shape.as_list() == [2]
     assert s1.shape.as_list() == [1]
 
-  @test_util.run_deprecated_v1
   def testNonexistentDimTensor(self):
     x = array_ops.placeholder(dtypes.int32)
     values = np.zeros([5, 30])
     splits = array_ops.placeholder(dtypes.int32)
-    with self.assertRaisesRegex(ValueError, "Cannot infer"):
+    with self.assertRaisesRegexp(ValueError, "Cannot infer"):
       y = array_ops.split(values, splits, axis=x)
 
     splits = array_ops.placeholder(dtypes.int32, [3])
     y = array_ops.split(values, splits, axis=x)
     with self.session(use_gpu=True) as sess:
-      with self.assertRaisesRegex(errors_impl.InvalidArgumentError,
-                                  "must have exactly one element"):
+      with self.assertRaisesRegexp(errors_impl.InvalidArgumentError,
+                                   "must have exactly one element"):
         sess.run(y, {x: np.array([], dtype=np.int32), splits: [4, 11, 15]})
 
 

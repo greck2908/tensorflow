@@ -40,7 +40,7 @@ class StringToNumberOp : public OpKernel {
     // underlying storage.
     const Tensor* input_tensor;
     OP_REQUIRES_OK(context, context->input("string_tensor", &input_tensor));
-    const auto& input_flat = input_tensor->flat<tstring>();
+    const auto& input_flat = input_tensor->flat<string>();
 
     Tensor* output_tensor = nullptr;
     OP_REQUIRES_OK(context,
@@ -51,7 +51,7 @@ class StringToNumberOp : public OpKernel {
     for (int i = 0; i < input_flat.size(); ++i) {
       OP_REQUIRES(
           context,
-          strings::SafeStringToNumeric<OutputType>(input_flat(i),
+          strings::SafeStringToNumeric<OutputType>(input_flat(i).c_str(),
                                                    &output_flat(i)),
           errors::InvalidArgument(kErrorMessage, input_flat(i).c_str()));
     }

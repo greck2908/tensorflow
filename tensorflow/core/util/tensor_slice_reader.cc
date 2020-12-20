@@ -17,10 +17,10 @@ limitations under the License.
 
 #include <utility>
 #include <vector>
-
-#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/framework/types.pb_text.h"
 #include "tensorflow/core/framework/versions.h"
 #include "tensorflow/core/lib/core/errors.h"
+#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/lib/io/iterator.h"
 #include "tensorflow/core/lib/io/table.h"
 #include "tensorflow/core/lib/io/table_options.h"
@@ -196,12 +196,7 @@ const TensorSliceSet* TensorSliceReader::FindTensorSlice(
   return tss;
 }
 
-TensorSliceReader::~TensorSliceReader() {
-  for (auto& temp : tensors_) {
-    delete temp.second;
-  }
-  tensors_.clear();
-}
+TensorSliceReader::~TensorSliceReader() { gtl::STLDeleteValues(&tensors_); }
 
 bool TensorSliceReader::HasTensor(const string& name, TensorShape* shape,
                                   DataType* type) const {
@@ -304,9 +299,9 @@ TensorSliceReader::GetVariableToDataTypeMap() const {
 const string TensorSliceReader::DebugString() const {
   string shape_str;
   if (status().ok()) {
-    for (const auto& e : Tensors()) {
+    for (auto e : Tensors()) {
       strings::StrAppend(&shape_str, e.first, " (",
-                         DataType_Name(e.second->type()), ") ",
+                         EnumName_DataType(e.second->type()), ") ",
                          e.second->shape().DebugString());
       // Indicates if a tensor has more than 1 slice (i.e., it's partitioned).
       const int num_slices = e.second->Slices().size();

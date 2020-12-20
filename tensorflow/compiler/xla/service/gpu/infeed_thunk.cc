@@ -23,36 +23,18 @@ namespace xla {
 namespace gpu {
 
 InfeedThunk::InfeedThunk(
-    ThunkInfo thunk_info,
-    const ShapeTree<BufferAllocation::Slice>& infeed_slices)
-    : Thunk(Kind::kInfeed, thunk_info),
-      infeed_slices_(infeed_slices) {}
+    const ShapeTree<BufferAllocation::Slice>& infeed_slices,
+    const HloInstruction* hlo_instruction)
+    : Thunk(Kind::kInfeed, hlo_instruction), infeed_slices_(infeed_slices) {}
 
-Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
-  auto& stream = *params.stream;
-  auto& buffer_allocations = *params.buffer_allocations;
+Status InfeedThunk::ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                                    se::Stream* stream,
+                                    HloExecutionProfiler* profiler) {
+  VLOG(2) << "Infeeding to GPU: " << hlo_instruction()->ToString();
 
-  VLOG(2) << "Infeeding to GPU";
-
-  auto op_profiler =
-      params.profiler->MakeScopedInstructionProfiler(profile_index());
+  auto op_profiler = profiler->MakeScopedInstructionProfiler(hlo_instruction());
   ShapeTree<InfeedBuffer> infeed_buffers =
       GetOrCreateInfeedManager()->BlockingGetNextDestination();
-
-  // infeed_slices_'s shape should be a tuple of shape (buffers, token).
-  const auto& infeed_shape = infeed_slices_.shape();
-  TF_RET_CHECK(infeed_shape.IsTuple())
-      << ShapeUtil::HumanStringWithLayout(infeed_shape);
-  TF_RET_CHECK(infeed_shape.tuple_shapes().size() == 2)
-      << ShapeUtil::HumanStringWithLayout(infeed_shape);
-  TF_RET_CHECK(infeed_shape.tuple_shapes(1).IsToken())
-      << ShapeUtil::HumanStringWithLayout(infeed_shape);
-  TF_RET_CHECK(
-      ShapeUtil::Equal(infeed_buffers.shape(), infeed_shape.tuple_shapes(0)))
-      << "Expected infeed of shape "
-      << ShapeUtil::HumanStringWithLayout(infeed_shape.tuple_shapes(0))
-      << " but was "
-      << ShapeUtil::HumanStringWithLayout(infeed_buffers.shape());
 
   {
     // The infeed buffer has an extra outer tuple with a token. Adjust the index
@@ -63,7 +45,7 @@ Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
           const Shape& shape = ShapeUtil::GetSubshape(infeed_buffers.shape(),
                                                       ShapeIndexView(index, 1));
           // For the leaf buffers of the tuple copy the elements directly.
-          if (shape.IsArray()) {
+          if (ShapeUtil::IsArray(shape)) {
             const BufferAllocation::Slice& tuple_element_buffer =
                 infeed_slices_.element(index);
             se::DeviceMemoryBase tuple_element_address =
@@ -71,8 +53,8 @@ Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
 
             InfeedBuffer* buffer =
                 infeed_buffers.mutable_element(ShapeIndexView(index, 1));
-            stream.ThenMemcpy(&tuple_element_address,
-                              *(buffer->device_memory()), buffer->length());
+            stream->ThenMemcpy(&tuple_element_address,
+                               *(buffer->device_memory()), buffer->length());
             tuple_element_addresses->push_back(tuple_element_address.opaque());
             return;
           }
@@ -92,8 +74,8 @@ Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
           se::DeviceMemoryBase tuple_address =
               buffer_allocations.GetDeviceAddress(
                   infeed_slices_.element(index));
-          stream.ThenMemcpy(&tuple_address,
-                            inner_tuple_element_addresses.data(), host_size);
+          stream->ThenMemcpy(&tuple_address,
+                             inner_tuple_element_addresses.data(), host_size);
           tuple_element_addresses->push_back(tuple_address.opaque());
         };
 
@@ -109,12 +91,12 @@ Status InfeedThunk::ExecuteOnStream(const ExecuteParams& params) {
   void* infeed_addresses[] = {data_address.opaque(), nullptr};
   se::DeviceMemoryBase top_level_address =
       buffer_allocations.GetDeviceAddress(infeed_slices_.element({}));
-  stream.ThenMemcpy(&top_level_address, infeed_addresses, 2 * sizeof(void*));
+  stream->ThenMemcpy(&top_level_address, infeed_addresses, 2 * sizeof(void*));
 
-  Status block_status = stream.BlockHostUntilDone();
+  Status block_status = stream->BlockHostUntilDone();
   if (!block_status.ok()) {
     return InternalError("Failed to complete data transfer on stream %p: %s",
-                         &stream, block_status.error_message());
+                         stream, block_status.error_message());
   }
 
   VLOG(2) << "Infeeding to GPU complete";

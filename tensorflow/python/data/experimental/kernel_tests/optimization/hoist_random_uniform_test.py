@@ -17,14 +17,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-import functools
-
 from absl.testing import parameterized
 
-from tensorflow.python.data.experimental.ops import testing
+from tensorflow.python.data.experimental.ops import optimization
 from tensorflow.python.data.kernel_tests import test_base
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import errors
@@ -35,7 +32,11 @@ from tensorflow.python.ops import random_ops
 from tensorflow.python.platform import test
 
 
-def _test_combinations():
+def _hoist_random_uniform_test_cases():
+  """Generates test cases for the HoistRandomUniform optimization."""
+
+  plus_one = lambda x: x + 1
+
   def random(_):
     return random_ops.random_uniform([],
                                      minval=1,
@@ -49,55 +50,43 @@ def _test_combinations():
     with ops.control_dependencies([assert_op]):
       return y
 
-  cases = [
-      ("Increment", lambda x: x + 1, False),
-      ("Random", random, True),
-      ("RandomWithAssert", random_with_assert, True),
-      ("Complex", lambda x: (random(x) + random(x)) / 2, False),
-  ]
+  twice_random = lambda x: (random(x) + random(x)) / 2.
 
-  def reduce_fn(x, y):
-    name, map_fn, should_optimize = y
-    return x + combinations.combine(
-        map_fn=combinations.NamedObject(name, map_fn),
-        should_optimize=should_optimize)
-
-  return functools.reduce(reduce_fn, cases, [])
+  tests = [("PlusOne", plus_one, False), ("RandomUniform", random, True),
+           ("RandomWithAssert", random_with_assert, True),
+           ("TwiceRandom", twice_random, False)]
+  return tuple(tests)
 
 
 class HoistRandomUniformTest(test_base.DatasetTestBase, parameterized.TestCase):
 
   def _testDataset(self, dataset):
+    iterator = dataset.make_one_shot_iterator()
+    get_next = iterator.get_next()
     previous_result = 0
-    get_next = self.getNext(dataset)
-    for _ in range(5):
-      result = self.evaluate(get_next())
-      self.assertLessEqual(1, result)
-      self.assertLessEqual(result, 10)
-      # This checks if the result is somehow random by checking if we are not
-      # generating the same values.
-      self.assertNotEqual(previous_result, result)
-      previous_result = result
-    with self.assertRaises(errors.OutOfRangeError):
-      self.evaluate(get_next())
-    with self.assertRaises(errors.OutOfRangeError):
-      self.evaluate(get_next())
+    with self.cached_session() as sess:
+      for _ in range(5):
+        result = sess.run(get_next)
+        self.assertLessEqual(1, result)
+        self.assertLessEqual(result, 10)
+        # This checks if the result is somehow random by checking if we are not
+        # generating the same values.
+        self.assertNotEqual(previous_result, result)
+        previous_result = result
+      with self.assertRaises(errors.OutOfRangeError):
+        sess.run(get_next)
 
-  @combinations.generate(
-      combinations.times(test_base.default_test_combinations(),
-                         _test_combinations()))
-  def testHoistFunction(self, map_fn, should_optimize):
+  @parameterized.named_parameters(*_hoist_random_uniform_test_cases())
+  def testHoisting(self, function, will_optimize):
     dataset = dataset_ops.Dataset.range(5).apply(
-        testing.assert_next(
-            ["Zip[0]", "Map"] if should_optimize else ["Map"])).map(map_fn)
+        optimization.assert_next(
+            ["Zip[0]", "Map"] if will_optimize else ["Map"])).map(function)
 
     options = dataset_ops.Options()
-    options.experimental_optimization.apply_default_optimizations = False
-    options.experimental_optimization.hoist_random_uniform = True
+    options.experimental_hoist_random_uniform = True
     dataset = dataset.with_options(options)
     self._testDataset(dataset)
 
-  @combinations.generate(test_base.default_test_combinations())
   def testCapturedInputs(self):
     a = constant_op.constant(1, dtype=dtypes.float32)
     b = constant_op.constant(0, dtype=dtypes.float32)
@@ -108,10 +97,9 @@ class HoistRandomUniformTest(test_base.DatasetTestBase, parameterized.TestCase):
           [], minval=1, maxval=10, dtype=dtypes.float32, seed=42)
 
     dataset = dataset_ops.Dataset.range(5).apply(
-        testing.assert_next(["Zip[0]", "Map"])).map(random_with_capture)
+        optimization.assert_next(["Zip[0]", "Map"])).map(random_with_capture)
     options = dataset_ops.Options()
-    options.experimental_optimization.apply_default_optimizations = False
-    options.experimental_optimization.hoist_random_uniform = True
+    options.experimental_hoist_random_uniform = True
     dataset = dataset.with_options(options)
     self._testDataset(dataset)
 

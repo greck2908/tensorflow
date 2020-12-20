@@ -13,7 +13,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/core/common_runtime/device_factory.h"
 #include "tensorflow/core/common_runtime/kernel_benchmark_testlib.h"
 #include "tensorflow/core/framework/node_def_builder.h"
 #include "tensorflow/core/framework/op.h"
@@ -24,11 +23,8 @@ limitations under the License.
 #include "tensorflow/core/framework/types.pb.h"
 #include "tensorflow/core/graph/graph.h"
 #include "tensorflow/core/kernels/ops_testutil.h"
-#include "tensorflow/core/lib/core/status_test_util.h"
 #include "tensorflow/core/platform/test_benchmark.h"
 #include "tensorflow/core/platform/types.h"
-#include "tensorflow/core/public/session_options.h"
-#include "tensorflow/core/public/version.h"
 
 namespace tensorflow {
 
@@ -83,17 +79,16 @@ void ConstantOpTest::PersistentMemoryTrackingTest(bool on_gpu) {
   }
 
   // Remove memory leak errors.
-  for (auto allocator_pair : ctx.ConsumeWrappedAllocators()) {
+  for (auto allocator_pair : ctx.wrapped_allocators()) {
     allocator_pair.second->GetRecordsAndUnRef();
   }
 }
 
 TEST_F(ConstantOpTest, PersistentMemoryTracking) {
   PersistentMemoryTrackingTest(false);
-#if (defined(GOOGLE_CUDA) && GOOGLE_CUDA) || \
-    (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
+#if GOOGLE_CUDA
   PersistentMemoryTrackingTest(true);
-#endif  // GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#endif  // GOOGLE_CUDA
 }
 
 // Returns graph containing "num" const nodes.  If 'sequential' is
@@ -114,23 +109,15 @@ static Graph* ManyConsts(int num, bool sequential) {
   return g;
 }
 
-static void BM_ManyConsts_Parallel(::testing::benchmark::State& state) {
-  const int num = state.range(0);
-
-  test::Benchmark("cpu", ManyConsts(num, false /* !sequential */),
-                  /*old_benchmark_api*/ false)
-      .Run(state);
-  state.SetItemsProcessed(static_cast<int64>(state.iterations()) * num);
+static void BM_ManyConsts_Parallel(int iters, int num) {
+  testing::ItemsProcessed(static_cast<int64>(iters) * num);
+  test::Benchmark("cpu", ManyConsts(num, false /* !sequential */)).Run(iters);
 }
 BENCHMARK(BM_ManyConsts_Parallel)->Range(1, 1 << 10);
 
-static void BM_ManyConsts_Sequential(::testing::benchmark::State& state) {
-  const int num = state.range(0);
-
-  test::Benchmark("cpu", ManyConsts(num, true /* sequential */),
-                  /*old_benchmark_api*/ false)
-      .Run(state);
-  state.SetItemsProcessed(static_cast<int64>(state.iterations()) * num);
+static void BM_ManyConsts_Sequential(int iters, int num) {
+  testing::ItemsProcessed(static_cast<int64>(iters) * num);
+  test::Benchmark("cpu", ManyConsts(num, true /* sequential */)).Run(iters);
 }
 BENCHMARK(BM_ManyConsts_Sequential)->Range(1, 1 << 10);
 

@@ -13,13 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "tensorflow/cc/framework/cc_op_gen.h"
-
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
-#include "absl/strings/escaping.h"
+#include "tensorflow/cc/framework/cc_op_gen.h"
 #include "tensorflow/core/framework/api_def.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/attr_value_util.h"
@@ -27,8 +25,9 @@ limitations under the License.
 #include "tensorflow/core/framework/op_gen_lib.h"
 #include "tensorflow/core/framework/tensor.pb.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
-#include "tensorflow/core/framework/types.pb.h"
+#include "tensorflow/core/framework/types.pb_text.h"
 #include "tensorflow/core/lib/gtl/map_util.h"
+#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/lib/hash/hash.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
@@ -43,24 +42,19 @@ namespace {
 const int kRightMargin = 79;
 
 // Converts:
-//   bazel-out/.../(bin|genfiles)/(external/YYY/)?XX
+//   bazel-out/.../genfiles/(external/YYY/)?XX
 // to: XX.
 string GetPath(const string& dot_h_fname) {
-  auto pos = dot_h_fname.find("/bin/");
+  auto pos = dot_h_fname.find("/genfiles/");
   string result = dot_h_fname;
   if (pos != string::npos) {
     // - 1 account for the terminating null character (\0) in "/genfiles/".
-    result = dot_h_fname.substr(pos + sizeof("/bin/") - 1);
-  } else {
-    pos = dot_h_fname.find("/genfiles/");
-    if (pos != string::npos) {
-      result = dot_h_fname.substr(pos + sizeof("/genfiles/") - 1);
-    }
+    result = dot_h_fname.substr(pos + sizeof("/genfiles/") - 1);
   }
   if (result.size() > sizeof("external/") &&
       result.compare(0, sizeof("external/") - 1, "external/") == 0) {
     result = result.substr(sizeof("external/") - 1);
-    pos = result.find('/');
+    pos = result.find("/");
     if (pos != string::npos) {
       result = result.substr(pos + 1);
     }
@@ -134,7 +128,7 @@ string MakeComment(StringPiece text, StringPiece indent) {
 }
 
 string PrintString(const string& str) {
-  return strings::StrCat("\"", absl::CEscape(str), "\"");
+  return strings::StrCat("\"", str_util::CEscape(str), "\"");
 }
 
 string PrintTensorShape(const TensorShapeProto& shape_proto) {
@@ -192,12 +186,12 @@ string PrintTensor(const TensorProto& tensor_proto) {
       string ret;
       for (int64 i = 0; i < num_elts; ++i) {
         if (i > 0) strings::StrAppend(&ret, " ");
-        strings::StrAppend(&ret, absl::CEscape(t.flat<tstring>()(i)));
+        strings::StrAppend(&ret, str_util::CEscape(t.flat<string>()(i)));
       }
       return ret;
     }
     default: {
-      LOG(FATAL) << "Not handling type " << DataType_Name(t.dtype());
+      LOG(FATAL) << "Not handling type " << EnumName_DataType(t.dtype());
       return string();
     }
   }
@@ -222,7 +216,7 @@ string PrintAttrValue(const string& op, const AttrValue& attr_value) {
     case AttrValue::kB:
       return attr_value.b() ? "true" : "false";
     case AttrValue::kType:
-      return DataType_Name(attr_value.type());
+      return EnumName_DataType(attr_value.type());
     case AttrValue::kShape:
       return PrintTensorShape(attr_value.shape());
     case AttrValue::kTensor:
@@ -253,7 +247,8 @@ string PrintAttrValue(const string& op, const AttrValue& attr_value) {
       } else if (attr_value.list().type_size() > 0) {
         for (int i = 0; i < attr_value.list().type_size(); ++i) {
           if (i > 0) strings::StrAppend(&ret, ", ");
-          strings::StrAppend(&ret, DataType_Name(attr_value.list().type(i)));
+          strings::StrAppend(&ret,
+                             EnumName_DataType(attr_value.list().type(i)));
         }
       } else if (attr_value.list().shape_size() > 0) {
         for (int i = 0; i < attr_value.list().shape_size(); ++i) {
@@ -291,28 +286,11 @@ string ToCamelCase(const string& str) {
   bool cap = true;
   while (i < str.size()) {
     const char c = str[i++];
-    if (c == '>') {
-      cap = true;
-    } else if (c == joiner) {
+    if (c == joiner) {
       cap = true;
     } else if (cap) {
       result += toupper(c);
       cap = false;
-    } else {
-      result += c;
-    }
-  }
-  return result;
-}
-
-string SeparateNamespaces(const string& str) {
-  string result;
-  const char joiner = '_';
-  size_t i = 0;
-  while (i < str.size()) {
-    const char c = str[i++];
-    if (c == '>') {
-      result += joiner;
     } else {
       result += c;
     }
@@ -329,7 +307,7 @@ std::pair<const char*, bool> AttrTypeName(StringPiece attr_type) {
       new std::unordered_map<StringPiece, std::pair<const char*, bool>,
                              StringPieceHasher>{
           {"string", {"StringPiece", false}},
-          {"list(string)", {"gtl::ArraySlice<::tensorflow::tstring>", true}},
+          {"list(string)", {"gtl::ArraySlice<string>", true}},
           {"int", {"int64", false}},
           {"list(int)", {"gtl::ArraySlice<int>", true}},
           {"float", {"float", false}},
@@ -343,7 +321,6 @@ std::pair<const char*, bool> AttrTypeName(StringPiece attr_type) {
           {"tensor", {"TensorProto", true}},
           {"list(tensor)", {"gtl::ArraySlice<TensorProto>", true}},
           {"func", {"NameAttrList", true}},
-          {"list(func)", {"gtl::ArraySlice<NameAttrList>", true}},
       };
 
   auto entry = attr_type_map->find(attr_type);
@@ -565,7 +542,7 @@ struct OpInfo {
 OpInfo::OpInfo(const OpDef& graph_op_def, const ApiDef& api_def,
                const std::vector<string>& aliases)
     : graph_op_def(graph_op_def), api_def(api_def), aliases(aliases) {
-  op_name = SeparateNamespaces(api_def.endpoint(0).name());
+  op_name = api_def.endpoint(0).name();
   InferOpAttributes(graph_op_def, &inferred_input_attrs);
   has_optional_attrs = HasOptionalAttrs(api_def, inferred_input_attrs);
   arg_types.push_back("const ::tensorflow::Scope&");

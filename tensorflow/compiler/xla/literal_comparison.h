@@ -35,9 +35,9 @@ Status EqualShapes(const Shape& expected, const Shape& actual);
 // primitive type are equal.
 Status Equal(const LiteralSlice& expected, const LiteralSlice& actual);
 
-using MiscompareCallback = std::function<void(
-    const LiteralSlice& expected, const LiteralSlice& actual,
-    const LiteralSlice& mismatches, const ShapeIndex& shape_index)>;
+using MiscompareCallback =
+    std::function<void(const LiteralSlice& expected, const LiteralSlice& actual,
+                       const LiteralSlice& mismatches)>;
 
 // Inspects whether the expected and actual literals are within the given error
 // bound for all elements. Also, inspects whether the rank, dimensions sizes,
@@ -55,13 +55,9 @@ using MiscompareCallback = std::function<void(
 // being compared.
 //
 // If detailed_message is true, then the error message in the assertion result
-// will contain a more detailed breakdown of mismatches.  By default, we display
-// a detailed message only for "large" inputs.
-//
-// If miscompare_callback is nullptr, Near will return an error on the first
-// detected mismatch.
+// will contain a more detailed breakdown of mismatches.
 Status Near(const LiteralSlice& expected, const LiteralSlice& actual,
-            const ErrorSpec& error, absl::optional<bool> detailed_message,
+            const ErrorSpec& error, bool detailed_message,
             const MiscompareCallback& miscompare_callback);
 
 // Calling ToString on a literal with over 100 million elements takes around

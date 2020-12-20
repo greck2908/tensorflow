@@ -19,11 +19,11 @@ limitations under the License.
 
 #include "tensorflow/core/kernels/transpose_op.h"
 
-#include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
 #include "tensorflow/core/framework/tensor_shape.h"
+#include "tensorflow/core/kernels/bounds_check.h"
 #include "tensorflow/core/kernels/transpose_functor.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "tensorflow/core/lib/strings/str_util.h"
@@ -91,6 +91,20 @@ REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
                             .HostMemory("y"),
                         InvertPermutationOp<int64>);
 
+#ifdef TENSORFLOW_USE_SYCL
+REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
+                            .Device(DEVICE_SYCL)
+                            .TypeConstraint<int32>("T")
+                            .HostMemory("x")
+                            .HostMemory("y"),
+                        InvertPermutationOp<int32>);
+REGISTER_KERNEL_BUILDER(Name("InvertPermutation")
+                            .Device(DEVICE_SYCL)
+                            .TypeConstraint<int64>("T")
+                            .HostMemory("x")
+                            .HostMemory("y"),
+                        InvertPermutationOp<int64>);
+#endif  // TENSORFLOW_USE_SYCL
 
 namespace {
 template <typename Tperm>
@@ -162,9 +176,10 @@ void TransposeOp::Compute(OpKernelContext* ctx) {
     }
   }
   for (int i = 0; i < dims; ++i) {
-    OP_REQUIRES(ctx, bits[i],
-                errors::InvalidArgument(i, " is missing from {",
-                                        absl::StrJoin(permutation, ","), "}."));
+    OP_REQUIRES(
+        ctx, bits[i],
+        errors::InvalidArgument(i, " is missing from {",
+                                str_util::Join(permutation, ","), "}."));
   }
 
   // 0-D, 1-D, and identity transposes do nothing.
@@ -203,6 +218,20 @@ Status ConjugateTransposeCpuOp::DoTranspose(OpKernelContext* ctx,
                                             perm, out);
 }
 
+#if defined(INTEL_MKL) && defined(ENABLE_MKL)
+#define REGISTER(T)                                   \
+  REGISTER_KERNEL_BUILDER(Name("Transpose")           \
+                              .Device(DEVICE_CPU)     \
+                              .TypeConstraint<T>("T") \
+                              .HostMemory("perm"),    \
+                          MklTransposeCpuOp);         \
+  REGISTER_KERNEL_BUILDER(Name("ConjugateTranspose")  \
+                              .Device(DEVICE_CPU)     \
+                              .TypeConstraint<T>("T") \
+                              .HostMemory("perm"),    \
+                          MklConjugateTransposeCpuOp);
+
+#else  // INTEL_MKL && ENABLE_MKL
 #define REGISTER(T)                                   \
   REGISTER_KERNEL_BUILDER(Name("Transpose")           \
                               .Device(DEVICE_CPU)     \
@@ -214,11 +243,12 @@ Status ConjugateTransposeCpuOp::DoTranspose(OpKernelContext* ctx,
                               .TypeConstraint<T>("T") \
                               .HostMemory("perm"),    \
                           ConjugateTransposeCpuOp);
+#endif  // INTEL_MKL && ENABLE_MKL
 
 TF_CALL_ALL_TYPES(REGISTER)
 #undef REGISTER
 
-#if GOOGLE_CUDA || TENSORFLOW_USE_ROCM
+#if GOOGLE_CUDA
 Status TransposeGpuOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
                                    gtl::ArraySlice<int32> perm, Tensor* out) {
   typedef Eigen::GpuDevice GPUDevice;
@@ -249,4 +279,33 @@ TF_CALL_POD_TYPES(REGISTER);
 #undef REGISTER
 #endif
 
+#ifdef TENSORFLOW_USE_SYCL
+Status TransposeSyclOp::DoTranspose(OpKernelContext* ctx, const Tensor& in,
+                                    gtl::ArraySlice<int32> perm, Tensor* out) {
+  typedef Eigen::SyclDevice SYCLDevice;
+  return ::tensorflow::DoTranspose(ctx->eigen_device<SYCLDevice>(), in, perm,
+                                   out);
+}
+Status ConjugateTransposeSyclOp::DoTranspose(OpKernelContext* ctx,
+                                             const Tensor& in,
+                                             gtl::ArraySlice<int32> perm,
+                                             Tensor* out) {
+  typedef Eigen::SyclDevice SYCLDevice;
+  return ::tensorflow::DoConjugateTranspose(ctx->eigen_device<SYCLDevice>(), in,
+                                            perm, out);
+}
+#define REGISTER(T)                                   \
+  REGISTER_KERNEL_BUILDER(Name("Transpose")           \
+                              .Device(DEVICE_SYCL)    \
+                              .TypeConstraint<T>("T") \
+                              .HostMemory("perm"),    \
+                          TransposeSyclOp);           \
+  REGISTER_KERNEL_BUILDER(Name("ConjugateTranspose")  \
+                              .Device(DEVICE_SYCL)    \
+                              .TypeConstraint<T>("T") \
+                              .HostMemory("perm"),    \
+                          ConjugateTransposeSyclOp);
+TF_CALL_POD_TYPES(REGISTER);
+#undef REGISTER
+#endif
 }  // namespace tensorflow

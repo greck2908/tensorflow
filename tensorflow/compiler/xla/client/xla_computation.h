@@ -19,7 +19,6 @@ limitations under the License.
 #include <utility>
 
 #include "tensorflow/compiler/xla/service/hlo.pb.h"
-#include "tensorflow/compiler/xla/shape.h"
 #include "tensorflow/compiler/xla/status_macros.h"
 #include "tensorflow/compiler/xla/xla_data.pb.h"
 
@@ -29,8 +28,8 @@ namespace xla {
 class XlaComputation {
  public:
   XlaComputation() : unique_id_(-1) {}
-  XlaComputation(HloModuleProto proto)
-      : unique_id_(proto.id()), proto_(std::move(proto)) {}
+  XlaComputation(const HloModuleProto& proto)
+      : unique_id_(proto.id()), proto_(proto) {}
 
   ~XlaComputation() {}
 

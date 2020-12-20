@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/graph/algorithm.h"
 #include "tensorflow/core/graph/graph.h"
+#include "tensorflow/core/graph/graph_constructor.h"
 #include "tensorflow/core/graph/tensor_id.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
@@ -206,7 +207,7 @@ Status PruneForTargets(Graph* g, const NameIndex& name_index,
     return errors::NotFound("PruneForTargets: Some target nodes not found: ",
                             not_found);
   }
-  PruneForReverseReachability(g, std::move(targets));
+  PruneForReverseReachability(g, targets);
 
   // Reconnect nodes with no outgoing edges to the sink node
   FixupSourceAndSinkEdges(g);
@@ -228,7 +229,7 @@ Status ArgFeedRewrite::AddNode(Graph* g, NodeBuilder::NodeOut feed_tensor,
                   "_Arg")
           .Attr("T", BaseType(feed_tensor.node->output_type(feed_tensor.index)))
           .Attr("index", arg_index_)
-          .Finalize(g, out_node, /*consume=*/true));
+          .Finalize(g, out_node));
   (*out_node)->set_assigned_device_name(device_info().name());
   return Status::OK();
 }
@@ -247,7 +248,7 @@ Status RecvFeedRewrite::AddNode(Graph* g, NodeBuilder::NodeOut feed_tensor,
           .Attr("send_device_incarnation",
                 static_cast<int64>(device_info().incarnation()))
           .Attr("client_terminated", true)
-          .Finalize(g, out_node, /*consume=*/true));
+          .Finalize(g, out_node));
 
   (*out_node)->set_assigned_device_name(device_info().name());
   return Status::OK();
@@ -267,7 +268,7 @@ Status RetvalFetchRewrite::AddNode(Graph* g, NodeBuilder::NodeOut fetch_tensor,
           .Attr("T",
                 BaseType(fetch_tensor.node->output_type(fetch_tensor.index)))
           .Attr("index", retval_index_)
-          .Finalize(g, out_node, /*consume=*/true));
+          .Finalize(g, out_node));
   (*out_node)->set_assigned_device_name(device_info().name());
   return Status::OK();
 }
@@ -285,7 +286,7 @@ Status SendFetchRewrite::AddNode(Graph* g, NodeBuilder::NodeOut fetch_tensor,
           .Attr("send_device_incarnation",
                 static_cast<int64>(device_info().incarnation()))
           .Attr("client_terminated", true)
-          .Finalize(g, out_node, /*consume=*/true));
+          .Finalize(g, out_node));
   (*out_node)->set_assigned_device_name(device_info().name());
   return Status::OK();
 }

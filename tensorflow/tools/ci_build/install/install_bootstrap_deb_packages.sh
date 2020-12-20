@@ -16,12 +16,9 @@
 
 set -e
 
-# Retry on connection timeout.
-bash -c "echo 'APT::Acquire::Retries \"3\";' > /etc/apt/apt.conf.d/80-retries"
-
 # Install bootstrap dependencies from ubuntu deb repository.
 apt-get update
 apt-get install -y --no-install-recommends \
-    apt-transport-https ca-certificates software-properties-common
+    software-properties-common
 apt-get clean
 rm -rf /var/lib/apt/lists/*

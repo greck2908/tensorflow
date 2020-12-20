@@ -51,15 +51,15 @@ class ScatterNdUpdateOpTest : public OpsTestBase {
 // TODO(simister): Re-enable this once binary size is under control.
 // TEST_F(ScatterNdUpdateOpTest, Simple_StringType) {
 //   MakeOp(DT_STRING_REF, DT_INT32);
-//   AddInputFromArray<tstring>(TensorShape({1}), {"Brain"});
+//   AddInputFromArray<string>(TensorShape({1}), {"Brain"});
 //   AddInputFromArray<int32>(TensorShape({1}), {0});
-//   AddInputFromArray<tstring>(TensorShape({1}), {"TensorFlow"});
+//   AddInputFromArray<string>(TensorShape({1}), {"TensorFlow"});
 //   TF_ASSERT_OK(RunOpKernel());
 //   // Check the new state of the input
 //   Tensor params_tensor = *mutable_input(0).tensor;
 //   Tensor expected(allocator(), DT_STRING, TensorShape({1}));
-//   test::FillValues<tstring>(&expected, {"TensorFlow"});
-//   test::ExpectTensorEqual<tstring>(expected, params_tensor);
+//   test::FillValues<string>(&expected, {"TensorFlow"});
+//   test::ExpectTensorEqual<string>(expected, params_tensor);
 // }
 
 // TEST_F(ScatterNdUpdateOpTest, Simple_BoolType) {
@@ -184,7 +184,7 @@ TEST_F(ScatterNdUpdateOpTest, Error_IndexOutOfRange) {
   AddInputFromArray<float>(TensorShape({3, 3}),
                            {100, 101, 102, 777, 778, 779, 10000, 10001, 10002});
   Status s = RunOpKernel();
-  EXPECT_TRUE(absl::StrContains(
+  EXPECT_TRUE(str_util::StrContains(
       s.ToString(), "indices[2] = [99] does not index into shape [5,3]"))
       << s;
 }
@@ -198,10 +198,10 @@ TEST_F(ScatterNdUpdateOpTest, Error_WrongDimsIndices) {
   AddInputFromArray<float>(TensorShape({3, 3}),
                            {100, 101, 102, 777, 778, 779, 10000, 10001, 10002});
   Status s = RunOpKernel();
-  EXPECT_TRUE(absl::StrContains(
+  EXPECT_TRUE(str_util::StrContains(
       s.ToString(),
-      "Dimensions [0,1) of indices[shape=[1,3,1]] = 1 must match dimensions "
-      "[0,1) of updates[shape=[3,3]] = 3"))
+      "The outermost dimension of updates and indices must match. Got "
+      "indices.shape [1,3,1], updates.shape [3,3]"))
       << s;
 }
 
@@ -216,10 +216,8 @@ TEST_F(ScatterNdUpdateOpTest, Error_MismatchedParamsAndUpdateDimensions) {
       TensorShape({3, 4}),
       {100, 101, 102, 103, 777, 778, 779, 780, 10000, 10001, 10002, 10004});
   Status s = RunOpKernel();
-  EXPECT_TRUE(absl::StrContains(
-      s.ToString(),
-      "Dimensions [1,2) of input[shape=[5,3]] must match dimensions [1,2) of "
-      "updates[shape=[3,4]]"))
+  EXPECT_TRUE(str_util::StrContains(
+      s.ToString(), "Must have updates.shape = indices.shape[:batch_dim]"))
       << s;
 }
 
@@ -233,10 +231,9 @@ TEST_F(ScatterNdUpdateOpTest, Error_MismatchedIndicesAndUpdateDimensions) {
   AddInputFromArray<float>(TensorShape({2, 3}),
                            {100, 101, 102, 10000, 10001, 10002});
   Status s = RunOpKernel();
-  EXPECT_TRUE(absl::StrContains(
+  EXPECT_TRUE(str_util::StrContains(
       s.ToString(),
-      "Dimensions [0,1) of indices[shape=[3,1]] = 3 must match dimensions [0,1)"
-      " of updates[shape=[2,3]] = 2"))
+      "The outermost dimension of updates and indices must match."))
       << s;
 }
 
@@ -254,8 +251,8 @@ class ScatterNdUpdateBM : public ScatterNdUpdateOpTest {
 };
 
 template <typename Index>
-void BM_ScatterNdHelper(::testing::benchmark::State& state, int embedding_size,
-                        const char* op) {
+static void BM_ScatterNdHelper(int iters, int embedding_size, const char* op) {
+  testing::StopTiming();
   const int kRows = 10000000 / embedding_size;
   std::vector<float> values;
   values.reserve(kRows);
@@ -280,33 +277,27 @@ void BM_ScatterNdHelper(::testing::benchmark::State& state, int embedding_size,
   bm.AddInputFromArray<Index>(TensorShape({kNumUpdates}), indices);
   bm.AddInputFromArray<float>(TensorShape({kNumUpdates, embedding_size}),
                               updates);
-  for (auto i : state) {
+  testing::ItemsProcessed((static_cast<int64>(kNumUpdates) * embedding_size) *
+                          iters);
+  testing::StartTiming();
+  while (iters-- > 0) {
     Status s = bm.RunOpKernel();
   }
-  state.SetItemsProcessed((static_cast<int64>(kNumUpdates) * embedding_size) *
-                          state.iterations());
+  testing::StopTiming();
 }
 
-void BM_ScatterNdUpdateInt32(::testing::benchmark::State& state) {
-  const int embedding_size = state.range(0);
-
-  BM_ScatterNdHelper<int32>(state, embedding_size, "ScatterNdUpdate");
+static void BM_ScatterNdUpdateInt32(int iters, int embedding_size) {
+  BM_ScatterNdHelper<int32>(iters, embedding_size, "ScatterNdUpdate");
 }
-void BM_ScatterNdUpdateInt64(::testing::benchmark::State& state) {
-  const int embedding_size = state.range(0);
-
-  BM_ScatterNdHelper<int64>(state, embedding_size, "ScatterNdUpdate");
+static void BM_ScatterNdUpdateInt64(int iters, int embedding_size) {
+  BM_ScatterNdHelper<int64>(iters, embedding_size, "ScatterNdUpdate");
 }
 
-void BM_ScatterNdAddInt32(::testing::benchmark::State& state) {
-  const int embedding_size = state.range(0);
-
-  BM_ScatterNdHelper<int32>(state, embedding_size, "ScatterNdAdd");
+static void BM_ScatterNdAddInt32(int iters, int embedding_size) {
+  BM_ScatterNdHelper<int32>(iters, embedding_size, "ScatterNdAdd");
 }
-void BM_ScatterNdAddInt64(::testing::benchmark::State& state) {
-  const int embedding_size = state.range(0);
-
-  BM_ScatterNdHelper<int64>(state, embedding_size, "ScatterNdAdd");
+static void BM_ScatterNdAddInt64(int iters, int embedding_size) {
+  BM_ScatterNdHelper<int64>(iters, embedding_size, "ScatterNdAdd");
 }
 
 BENCHMARK(BM_ScatterNdUpdateInt32)

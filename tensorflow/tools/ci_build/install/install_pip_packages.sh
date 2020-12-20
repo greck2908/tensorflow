@@ -16,11 +16,10 @@
 
 set -e
 
-# Get the latest version of pip so it recognize manylinux2010
-wget https://bootstrap.pypa.io/get-pip.py
-python3 get-pip.py
-python get-pip.py
-rm -f get-pip.py
+# We don't apt-get install so that we can install a newer version of pip.
+# Only needed for Ubuntu 14.04 and 16.04; not needed for 18.04 and Debian 8,9?
+easy_install -U pip==9.0.3
+easy_install3 -U pip==9.0.3
 
 # Install pip packages from whl files to avoid the time-consuming process of
 # building from source.
@@ -30,19 +29,12 @@ rm -f get-pip.py
 pip2 install wheel==0.31.1
 pip3 install wheel==0.31.1
 
-# Install last working version of setuptools. This must happen before we install
-# absl-py, which uses install_requires notation introduced in setuptools 20.5.
-pip2 install --upgrade setuptools==39.1.0
-pip3 install --upgrade setuptools==39.1.0
-
 pip2 install virtualenv
 pip3 install virtualenv
 
-# Install six and future.
-pip2 install --upgrade six==1.12.0
-pip3 install --upgrade six==1.12.0
-pip2 install "future>=0.17.1"
-pip3 install "future>=0.17.1"
+# Install six.
+pip2 install --upgrade six==1.10.0
+pip3 install --upgrade six==1.10.0
 
 # Install absl-py.
 pip2 install --upgrade absl-py
@@ -61,8 +53,8 @@ pip2 install --upgrade markdown==2.6.8
 pip3 install --upgrade markdown==2.6.8
 
 # Install protobuf.
-pip2 install --upgrade protobuf==3.6.1
-pip3 install --upgrade protobuf==3.6.1
+pip2 install --upgrade protobuf==3.6.0
+pip3 install --upgrade protobuf==3.6.0
 
 # Remove obsolete version of six, which can sometimes confuse virtualenv.
 rm -rf /usr/lib/python3/dist-packages/six*
@@ -78,8 +70,8 @@ else
   pip3 install --upgrade numpy==1.14.5
 fi
 
-pip2 install scipy==1.2.2
-pip3 install scipy==1.4.1
+pip2 install scipy==1.1.0
+pip3 install scipy==1.1.0
 
 pip2 install scikit-learn==0.18.1
 pip3 install scikit-learn==0.18.1
@@ -94,23 +86,13 @@ pip3 install psutil
 pip2 install py-cpuinfo
 pip3 install py-cpuinfo
 
-# pylint==1.6.4 requires python-astroid (>= 1.4.5) requires lazy-object-proxy
-# Latest version of lazy-object-proxy (1.4.2) fails to install from source
-# when using setuptools 39.1.0.
-# NOTE: Using the updated version of pylint for python3 as python2 is EOL,
-# thus using the updated version of lazy-object-proxy==1.4.3
-pip2 install lazy-object-proxy==1.4.1
-pip3 install lazy-object-proxy==1.4.3
-
-# pylint tests require the following version. pylint==1.6.4 hangs erratically,
-# thus using the updated version of 2.5.3 only for python3 as python2 is EOL
-# and this version is not available.
+# pylint tests require the following:
 pip2 install pylint==1.6.4
-pip3 install pylint==2.5.3
+pip3 install pylint==1.6.4
 
-# pycodestyle tests require the following:
-pip2 install pycodestyle
-pip3 install pycodestyle
+# pep8 tests require the following:
+pip2 install pep8
+pip3 install pep8
 
 # tf.mock require the following for python2:
 pip2 install mock
@@ -130,29 +112,22 @@ pip3 install --upgrade gast
 pip2 install --upgrade termcolor
 pip3 install --upgrade termcolor
 
+# Install last working version of setuptools.
+pip2 install --upgrade setuptools==39.1.0
+pip3 install --upgrade setuptools==39.1.0
+
 # Keras
-pip2 install keras_preprocessing==1.1.0 --no-deps
-pip3 install keras_preprocessing==1.1.0 --no-deps
+pip2 install keras_applications==1.0.6 --no-deps
+pip3 install keras_applications==1.0.6 --no-deps
+pip2 install keras_preprocessing==1.0.5 --no-deps
+pip3 install keras_preprocessing==1.0.5 --no-deps
 pip2 install --upgrade h5py==2.8.0
-pip3 install --upgrade h5py==3.1.0
+pip3 install --upgrade h5py==2.8.0
 
 # Estimator
-pip2 install tf-estimator-nightly --no-deps
-pip3 install tf-estimator-nightly --no-deps
+pip2 install tensorflow_estimator --no-deps
+pip3 install tensorflow_estimator --no-deps
 
-# Tensorboard
-pip2 install tb-nightly --no-deps
-pip3 install tb-nightly --no-deps
-
-# Argparse
-pip2 install --upgrade argparse
-pip3 install --upgrade argparse
-
-# tree
-pip2 install dm-tree
-pip3 install dm-tree
-
-# tf.distribute multi worker tests require the following:
-# Those tests are Python3 only.
-pip3 install --upgrade dill
-pip3 install --upgrade tblib
+# Install last working version of setuptools.
+pip2 install --upgrade setuptools==39.1.0
+pip3 install --upgrade setuptools==39.1.0

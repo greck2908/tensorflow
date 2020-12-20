@@ -24,10 +24,10 @@ limitations under the License.
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/types/optional.h"
-#include "tensorflow/compiler/xla/service/hlo_alias_analysis.h"
 #include "tensorflow/compiler/xla/service/hlo_computation.h"
 #include "tensorflow/compiler/xla/service/hlo_instruction.h"
 #include "tensorflow/compiler/xla/service/hlo_module.h"
+#include "tensorflow/compiler/xla/service/tuple_points_to_analysis.h"
 #include "tensorflow/compiler/xla/status.h"
 #include "tensorflow/compiler/xla/statusor.h"
 #include "tensorflow/core/lib/core/status.h"
@@ -38,7 +38,7 @@ namespace xla {
 // Class for bookkeeping the information on the given modules, in particular on
 // the interaction between computations.
 //
-// Companion instructions are one piece of information collected as we build the
+// Companion instructions are one of the information collected as we build the
 // metadata. For example, for each While instruction, companion instructions
 // refer to a set of While instructions in other computations that communicate
 // with each other.
@@ -51,13 +51,6 @@ namespace xla {
 // }                          While_4() { Recv(0) }
 //                          }
 //
-// Each instruction can belong to at most one companion set: While_0 and While_5
-// are in the same set even though they don't communicate with each other,
-// because they both communicate with While_2.
-//
-// A send and the matching recv must both have the same level of nesting of
-// companion instructions.
-//
 // Companion instructions are used to detect cycles in the graph and also for
 // global scheduling.
 class HloModuleGroupMetadata {
@@ -67,7 +60,8 @@ class HloModuleGroupMetadata {
     kInvalid,
     kWhileCondition,
     kWhileBody,
-    kConditionalBranch,
+    kConditionalTrue,
+    kConditionalFalse,
     kCallFunction,
   };
 
@@ -79,13 +73,12 @@ class HloModuleGroupMetadata {
   class TrackedInstruction {
    public:
     TrackedInstruction() = default;
-    TrackedInstruction(HloInstruction* instruction, ComputationKind kind,
-                       int index = -1)
-        : instruction_(instruction), kind_(kind), index_(index) {}
+    TrackedInstruction(HloInstruction* instruction, ComputationKind kind)
+        : instruction_(instruction), kind_(kind) {}
 
     bool operator==(const TrackedInstruction& rhs) const {
       return instruction_->opcode() == rhs.instruction_->opcode() &&
-             kind_ == rhs.kind_ && index_ == rhs.index_;
+             kind_ == rhs.kind_;
     }
     bool operator!=(const TrackedInstruction& rhs) const {
       return !operator==(rhs);
@@ -98,7 +91,6 @@ class HloModuleGroupMetadata {
    private:
     HloInstruction* instruction_ = nullptr;
     ComputationKind kind_ = ComputationKind::kInvalid;
-    int index_ = -1;
   };
 
   // Represents a channel and the instructions that form the channel.
@@ -137,8 +129,9 @@ class HloModuleGroupMetadata {
   // Returns if the given channel id exists in metadata.
   bool HasChannel(int64 channel_id) const;
 
-  // Returns the all-reduce instructions with the same channel_id.
-  const std::vector<HloInstruction*>& GetAllReduceGroup(int64 channel_id) const;
+  // Returns the all-reduce instructions with the same all_reduce_id.
+  const std::vector<HloInstruction*>& GetAllReduceGroup(
+      int64 all_reduce_id) const;
 
   // Returns the computation that contains the peer channel instructions for
   // the given instruction.
@@ -173,13 +166,12 @@ class HloModuleGroupMetadata {
   // Returns the number of modules for devices (excluding the host module).
   int64 GetDeviceModulesCount() const;
 
-  // Returns the companion set for the given instruction, including the
-  // instruction itself.
+  // Returns the companion instructions for the given instruction.
   //
   // Precondition: IsCompanionWhile(instruction) is true.
   const std::vector<HloInstruction*>& Companions(
       const HloInstruction* instruction) const {
-    CHECK(companion_set_index_.contains(instruction));
+    CHECK_EQ(companion_set_index_.count(instruction), 1);
     return companion_set(companion_set_index_.at(instruction));
   }
 
@@ -194,8 +186,7 @@ class HloModuleGroupMetadata {
     return companion_set_index_.at(instruction);
   }
 
-  // Returns the list of all companion sets in the HLO module group. Each
-  // returned set contains at least one HloInstruction.
+  // Returns the list of all companion sets in the HLO module group.
   const std::vector<std::unique_ptr<std::vector<HloInstruction*>>>&
   companion_sets() const {
     return companion_sets_;
@@ -204,11 +195,11 @@ class HloModuleGroupMetadata {
   // Returns all channels in the module group.
   const std::vector<Channel>& channels() const { return channels_; }
 
-  // Returns the maximum channel id used in the module group.
+  // Returns the maximum channel id or all_reduce_id used in the module group.
   int64 max_channel_id() const { return max_channel_id_; }
 
-  HloAliasAnalysis* alias_analysis(HloModule* module) const {
-    return alias_analyses_.at(module).get();
+  TuplePointsToAnalysis* points_to_analysis(HloModule* module) const {
+    return points_to_analyses_.at(module).get();
   }
 
  private:
@@ -224,8 +215,11 @@ class HloModuleGroupMetadata {
   // * Each channel has all 4 instructions (Send, Recv, SendDone, RecvDone).
   // * The shape of channel instructions match.
   // * The nest level of channel instructions match.
-  // * Channel instructions are used in allowed computations, i.e., in the
+  // * Channel instructions are used in allowed computations; i.e., in the
   //   entry computation of the module or condition/body of While computations.
+  //
+  // TODO(b/62064342): Currently, HloModuleGroupScheduler checks if there is a
+  // cycle in the graph, but it would be good to verify here.
   Status VerifyChannelInstructions();
 
   // Adds metadata that the given two instructions are companions.
@@ -237,8 +231,8 @@ class HloModuleGroupMetadata {
   Status CheckCommunicatingInstruction(HloInstruction* instruction) const;
 
   // Performs a consistency check on the companion sets built for the input
-  // modules. Checks that each instruction in a companion set is in a different
-  // module/device.
+  // modules. Check that a companion set does not include instructions from the
+  // same module/device.
   Status VerifyCompanionSets() const;
 
   // Retrieves a pointer to the stored TrackedInstruction associated with a
@@ -282,8 +276,8 @@ class HloModuleGroupMetadata {
   // The modules that this metadata was built from.
   const std::vector<HloModule*> modules_;
 
-  absl::flat_hash_map<HloModule*, std::unique_ptr<HloAliasAnalysis>>
-      alias_analyses_;
+  absl::flat_hash_map<HloModule*, std::unique_ptr<TuplePointsToAnalysis>>
+      points_to_analyses_;
 };
 
 }  // namespace xla

@@ -20,6 +20,7 @@ limitations under the License.
 #include <string>
 #include <vector>
 
+#include "tensorflow/core/lib/gtl/stl_util.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/test.h"
@@ -183,10 +184,7 @@ TEST(TopNTest, Ptr) {
   }
 
   std::vector<string *> extract = ConsumeRawPtr(topn.Extract());
-  for (auto &temp : extract) {
-    delete temp;
-  }
-  extract.clear();
+  tensorflow::gtl::STLDeleteElements(&extract);
 }
 
 struct PointeeGreater {

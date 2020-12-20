@@ -19,18 +19,14 @@ from __future__ import print_function
 
 import os
 
-from absl.testing import parameterized
-
 from tensorflow.python.data.experimental.ops import iterator_ops as contrib_iterator_ops
 from tensorflow.python.data.ops import dataset_ops
-from tensorflow.python.framework import combinations
-from tensorflow.python.framework import errors
 from tensorflow.python.framework import ops
 from tensorflow.python.platform import test
 from tensorflow.python.training import saver as saver_lib
 
 
-class SerializationIntegrationTest(test.TestCase, parameterized.TestCase):
+class SerializationIntegrationTest(test.TestCase):
 
   def _build_input_pipeline(self, name, num_outputs):
     with ops.name_scope(name):
@@ -55,8 +51,6 @@ class SerializationIntegrationTest(test.TestCase, parameterized.TestCase):
   def _ckpt_path(self):
     return os.path.join(self.get_temp_dir(), "iterator")
 
-  @combinations.generate(
-      combinations.combine(tf_api_version=1, mode=["graph"]))
   def testConcurrentSaves(self):
     num_pipelines = 100
     num_outputs = 100
@@ -66,9 +60,9 @@ class SerializationIntegrationTest(test.TestCase, parameterized.TestCase):
       init_ops, get_next_ops, saver = self._build_graph(num_pipelines,
                                                         num_outputs)
       with self.session(graph=g) as sess:
-        self.evaluate(init_ops)
+        sess.run(init_ops)
         for _ in range(break_point):
-          output = self.evaluate(get_next_ops)
+          output = sess.run(get_next_ops)
           for i in range(num_pipelines):
             all_outputs[i].append(output[i])
         saver.save(sess, self._ckpt_path())
@@ -77,26 +71,14 @@ class SerializationIntegrationTest(test.TestCase, parameterized.TestCase):
       init_ops, get_next_ops, saver = self._build_graph(num_pipelines,
                                                         num_outputs)
       with self.session(graph=g) as sess:
-        self.evaluate(init_ops)
         saver.restore(sess, self._ckpt_path())
         for _ in range(num_outputs - break_point):
-          output = self.evaluate(get_next_ops)
+          output = sess.run(get_next_ops)
           for i in range(num_pipelines):
             all_outputs[i].append(output[i])
 
     for output in all_outputs:
       self.assertSequenceEqual(sorted(output), range(num_outputs))
-
-  @combinations.generate(
-      combinations.combine(tf_api_version=1, mode=["graph"]))
-  def testUninitializedIterator(self):
-    num_pipelines = 1
-    num_outputs = 1
-    with ops.Graph().as_default() as g:
-      _, _, saver = self._build_graph(num_pipelines, num_outputs)
-      with self.session(graph=g) as sess:
-        with self.assertRaises(errors.FailedPreconditionError):
-          saver.save(sess, self._ckpt_path())
 
 
 if __name__ == "__main__":

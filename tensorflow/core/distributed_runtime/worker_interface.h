@@ -36,9 +36,8 @@ class TensorResponse;
 // Interface for talking with the TensorFlow Worker service.
 class WorkerInterface {
  public:
-  virtual void GetStatusAsync(CallOptions* opts,
-                              const GetStatusRequest* request,
-                              GetStatusResponse* response, bool fail_fast,
+  virtual void GetStatusAsync(const GetStatusRequest* request,
+                              GetStatusResponse* response,
                               StatusCallback done) = 0;
 
   virtual void CreateWorkerSessionAsync(
@@ -58,17 +57,18 @@ class WorkerInterface {
                                     StatusCallback done) = 0;
 
   virtual void RunGraphAsync(CallOptions* opts, RunGraphRequestWrapper* request,
-                             MutableRunGraphResponseWrapper* response,
+                             MutableRunGraphResponseWrapper* repsonse,
                              StatusCallback done) = 0;
 
   virtual void RunGraphAsync(CallOptions* opts, const RunGraphRequest* request,
                              RunGraphResponse* response, StatusCallback done) {
+    // TODO(mrry): Convert this to std::bind/std::move if the overhead
+    // of std::function copying becomes too much.
     RunGraphRequestWrapper* wrapped_request = new ProtoRunGraphRequest(request);
     MutableRunGraphResponseWrapper* wrapped_response =
         new NonOwnedProtoRunGraphResponse(response);
     RunGraphAsync(opts, wrapped_request, wrapped_response,
-                  [wrapped_request, wrapped_response,
-                   done = std::move(done)](const Status& s) {
+                  [wrapped_request, wrapped_response, done](const Status& s) {
                     done(s);
                     delete wrapped_request;
                     delete wrapped_response;
@@ -131,15 +131,7 @@ class WorkerInterface {
 
   Status GetStatus(const GetStatusRequest* request,
                    GetStatusResponse* response) {
-    Status ret;
-    Notification n;
-    GetStatusAsync(/*opts=*/nullptr, request, response, /*fail_fast=*/true,
-                   [&ret, &n](const Status& s) {
-                     ret = s;
-                     n.Notify();
-                   });
-    n.WaitForNotification();
-    return ret;
+    return CallAndWait(&ME::GetStatusAsync, request, response);
   }
 
   Status CreateWorkerSession(const CreateWorkerSessionRequest* request,

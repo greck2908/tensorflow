@@ -18,15 +18,14 @@ limitations under the License.
 
 #include <map>
 #include <memory>
-#include <set>
 #include <string>
 #include <vector>
 
-#include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_cat.h"
 #include "absl/types/span.h"
 #include "tensorflow/compiler/xla/service/compiler.h"
 #include "tensorflow/compiler/xla/service/computation_placer.h"
+#include "tensorflow/compiler/xla/service/device_memory_allocator.h"
 #include "tensorflow/compiler/xla/service/stream_pool.h"
 #include "tensorflow/compiler/xla/service/transfer_manager.h"
 #include "tensorflow/compiler/xla/statusor.h"
@@ -34,7 +33,6 @@ limitations under the License.
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
 #include "tensorflow/core/platform/thread_annotations.h"
-#include "tensorflow/stream_executor/device_memory_allocator.h"
 
 namespace Eigen {
 struct ThreadPoolDevice;
@@ -55,16 +53,9 @@ class BackendOptions {
   BackendOptions& set_intra_op_parallelism_threads(int num_threads);
   int intra_op_parallelism_threads() const;
 
-  // Sets the allowed_devices for selectively constructing stream executors
-  // on the platform.
-  BackendOptions& set_allowed_devices(
-      const absl::optional<std::set<int>>& allowed_devices);
-  const absl::optional<std::set<int>>& allowed_devices() const;
-
  private:
   se::Platform* platform_ = nullptr;
   int intra_op_parallelism_threads_ = -1;
-  absl::optional<std::set<int>> allowed_devices_;
 };
 
 // Class which encapsulates an XLA backend. It includes everything necessary
@@ -88,7 +79,7 @@ class Backend {
   // Accessors for the various objects.
   se::Platform* platform() const { return platform_; }
   Compiler* compiler() const { return compiler_; }
-  se::DeviceMemoryAllocator* memory_allocator() const {
+  DeviceMemoryAllocator* memory_allocator() const {
     return memory_allocator_.get();
   }
   TransferManager* transfer_manager() const { return transfer_manager_; }
@@ -156,6 +147,7 @@ class Backend {
   Status ResetDevices();
 
  private:
+  struct EigenThreadPoolWrapper;
   Backend(se::Platform* platform, Compiler* compiler,
           absl::Span<se::StreamExecutor* const> stream_executors,
           TransferManager* transfer_manager,
@@ -175,15 +167,13 @@ class Backend {
   tensorflow::mutex mu_;
 
   // Mapping from stream executor to stream pools, used by `BorrowStream` above.
-  absl::flat_hash_map<se::StreamExecutor*, std::unique_ptr<StreamPool>>
-      stream_pools_ TF_GUARDED_BY(mu_);
+  std::map<se::StreamExecutor*, StreamPool> stream_pools_ GUARDED_BY(mu_);
 
   // The default memory allocator to use.
-  std::unique_ptr<se::StreamExecutorMemoryAllocator> memory_allocator_;
+  std::unique_ptr<StreamExecutorMemoryAllocator> memory_allocator_;
 
   // For the CPU backend, an Eigen threadpool device for use by Eigen code.
-  struct IntraOpThreadPool;
-  std::unique_ptr<IntraOpThreadPool> intra_op_thread_pool_;
+  std::unique_ptr<EigenThreadPoolWrapper> intra_op_thread_pool_wrapper_;
 };
 
 }  // namespace xla
